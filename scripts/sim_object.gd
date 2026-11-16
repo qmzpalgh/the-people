@@ -12,7 +12,7 @@ var oseed := 0
 var label := ""  # e.g. whose memorial this is
 
 
-func setup(k: String, t: Vector2i, r: int, seed_v: int) -> void:
+func setup(k: String, t: Vector2i, r: int, seed_v: int, build := true) -> void:
 	oseed = seed_v
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_v
@@ -21,7 +21,8 @@ func setup(k: String, t: Vector2i, r: int, seed_v: int) -> void:
 	tile = t
 	rot = r
 	users.resize(capacity())
-	Meshes.build_object(self, k, rng)
+	if build:
+		Meshes.build_object(self, k, rng)
 	var d := dims()
 	position = Vector3(t.x + d.x / 2.0, 0, t.y + d.y / 2.0)
 	rotation.y = -r * PI / 2.0

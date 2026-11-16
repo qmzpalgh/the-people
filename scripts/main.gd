@@ -6,17 +6,21 @@ const MULT := [0.0, 1.0, 4.0, 12.0]
 
 static var skip_load := false
 
-var save_path := "user://the_people_save.json"
+var save_path := "user://the_people_save_v2.json"
 var world: World
 var cam: Cam
 var ui: UI
 var sfx: Sfx
 var people: Array = []      # household
-var neighbours: Array = []
+var neighbours: Array = []  # everyone in the other households
 var pending: Array = []     # children on the way: {at, a, b}
 var selected: Person
 var family := ""
-var money := 2500
+var households := {}        # id -> Household
+var home: Household         # the player's household
+var money: int:
+	get: return home.money
+	set(v): home.money = v
 var minutes := 7.5 * 60.0  # game minutes since day 0, 00:00
 var speed := 1
 var prev_speed := 1
@@ -89,9 +93,13 @@ func _ready() -> void:
 	sfx = Sfx.new()
 	add_child(sfx)
 	_build_env()
+	home = Household.new()
+	home.player = true
+	households[0] = home
 	world = World.new()
 	add_child(world)
-	world.setup(seed_v, data["world"] if data != null else null)
+	home.world = world
+	world.setup(seed_v, data["households"][0]["world"] if data != null else null)
 	if data != null:
 		_load_household(data)
 	else:
@@ -143,14 +151,15 @@ func _ready() -> void:
 			ui.debug_open(OS.get_environment("TP_UI"))
 
 
-func _make_person(id: int, sv: int, fam: String, is_resident: bool) -> Person:
+func _make_person(id: int, sv: int, fam: String, hh: Household) -> Person:
 	var p := Person.new()
-	p.setup(self, world, id, sv, fam, is_resident)
+	p.setup(self, hh.world, id, sv, fam, hh.player)
+	p.hh = hh
+	p.household = hh.id
 	add_child(p)
-	if is_resident:
+	if hh.player:
 		people.append(p)
 	else:
-		p.away = true
 		p.visible = false
 		neighbours.append(p)
 	next_pid = maxi(next_pid, id + 1)
@@ -159,9 +168,10 @@ func _make_person(id: int, sv: int, fam: String, is_resident: bool) -> Person:
 
 func _new_household() -> void:
 	family = Defs.surname(rng)
+	home.family = family
 	var spots := world.free_tiles_in("living")
 	for i in rng.randi_range(2, 3):
-		var p := _make_person(i, seed_base * 7 + i * 131, family, true)
+		var p := _make_person(i, seed_base * 7 + i * 131, family, home)
 		p.tile = spots[rng.randi() % spots.size()]
 		p.position = world.tile_center(p.tile)
 		p.rotation.y = rng.randf() * TAU
@@ -174,29 +184,49 @@ func _new_household() -> void:
 		_new_family(rng.randi_range(1, 3), true)
 
 
+## Another household, with a generated lot of its own that is simulated but never drawn.
+func _add_household(id: int, data = null) -> Household:
+	var hh := Household.new()
+	hh.id = id
+	var w := World.new()
+	w.headless = true
+	w.visible = false
+	add_child(w)
+	w.setup(int(rng.randi()), data)
+	w.set_night(world.night)
+	hh.world = w
+	households[id] = hh
+	next_hh = maxi(next_hh, id + 1)
+	return hh
+
+
 ## A neighbouring household: one or two adults (or elders) and sometimes children.
 func _new_family(size: int, established: bool) -> void:
 	var fam := Defs.surname(rng)
-	while fam == family or neighbours.any(func(n): return n.pname.ends_with(" " + fam)):
+	while households.values().any(func(h): return h.family == fam):
 		fam = Defs.surname(rng)
+	var hh := _add_household(next_hh)
+	hh.family = fam
+	hh.money = rng.randi_range(1800, 3200)
+	var spots := hh.world.free_tiles_in("living")
 	var members := []
 	for i in size:
-		var n := _make_person(next_pid, int(rng.randi()), fam, false)
-		n.household = next_hh
+		var n := _make_person(next_pid, int(rng.randi()), fam, hh)
 		if i < 2:
 			var elders := established and i == 0 and rng.randf() < 0.3
 			n.age = rng.randf_range(Defs.ELDER_AT, Defs.ELDER_AT + 6.0) if elders else rng.randf_range(8.0, 24.0)
 			if members.size() == 1 and members[0].stage() == "elder":
 				n.age = rng.randf_range(Defs.ELDER_AT - 4.0, Defs.ELDER_AT + 6.0)
-			if n.stage() == "adult" and rng.randf() < 0.75:
+			if established and n.stage() == "adult" and rng.randf() < 0.6:
 				n.job = {"career": rng.randi() % Defs.CAREERS.size(), "level": 0, "perf": 0.0}
 		else:
 			n.age = rng.randf_range(0.0, Defs.CHILD_DAYS - 0.5)
 		n.refresh_look()
+		n.tile = spots[rng.randi() % spots.size()]
+		n.position = hh.world.tile_center(n.tile)
 		for m in members:
 			rel[_rk(m, n)] = rng.randf_range(50.0, 90.0)
 		members.append(n)
-	next_hh += 1
 
 
 func known(p: Person) -> bool:
@@ -208,6 +238,16 @@ func known(p: Person) -> bool:
 
 func household_of(id: int) -> Array:
 	return everyone().filter(func(p): return p.household == id)
+
+
+## Members plus children on the way.
+func hh_count(hh: Household) -> int:
+	return household_of(hh.id).size() + pending.filter(func(pc): return int(pc["hh"]) == hh.id).size()
+
+
+## Everyone physically on a given lot right now.
+func present(w: World) -> Array:
+	return everyone().filter(func(p): return p.world == w and not p.away)
 
 
 func _build_env() -> void:
@@ -249,8 +289,9 @@ func _update_light(force := false) -> void:
 	sfx.set_day(soft)
 	var n := soft < 0.35
 	if n != world.night:
-		world.set_night(n)
-		world.update_room_scores()
+		for hh in households.values():
+			hh.world.set_night(n)
+			hh.world.update_room_scores()
 
 
 # ---------------------------------------------------------------- main loop
@@ -290,8 +331,8 @@ func _step(dh: float, ds: float) -> void:
 		return
 	var h := hour()
 	if day % 7 < 5:
-		for p in people:
-			if p.away or p.work_flag_day == day:
+		for p in everyone():
+			if p.away or p.vstate != "home" or p.work_flag_day == day:
 				continue
 			var c = p.sched()
 			if c != null and h >= c["start"] - 1.0 and h < c["start"] + 2.0:
@@ -300,7 +341,8 @@ func _step(dh: float, ds: float) -> void:
 	_room_t -= dh
 	if _room_t <= 0.0:
 		_room_t = 0.2
-		world.update_room_scores()
+		for hh in households.values():
+			hh.world.update_room_scores()
 	for pc in pending.duplicate():
 		if minutes >= pc["at"]:
 			pending.erase(pc)
@@ -336,20 +378,23 @@ func _hourly(h: int) -> void:
 
 
 func _new_day() -> void:
-	for p in people:
+	for p in everyone():
 		if p.job != null and (day - 1) % 7 < 5 and p.work_day != day - 1:
 			p.job.perf -= 15.0
-			msg("%s missed work yesterday." % p.first())
+			if p.resident:
+				msg("%s missed work yesterday." % p.first())
 		if p.stage() == "elder":
-			money += Defs.PENSION
+			p.hh.money += Defs.PENSION
 	_neighbourhood_day()
 	if day % 3 == 0:
-		var value := 0
-		for o in world.objects:
-			value += o.def["price"]
-		var bill := int(value * 0.03) + 25 * people.size()
-		money -= bill
-		msg("Bills paid: $%d." % bill)
+		for hh in households.values():
+			var value := 0
+			for o in hh.world.objects:
+				value += o.def["price"]
+			var bill := int(value * 0.03) + 25 * household_of(hh.id).size()
+			hh.money -= bill
+			if hh.player:
+				msg("Bills paid: $%d." % bill)
 	if _test_days == 0 and _shot == "":
 		save_game(true)
 
@@ -388,31 +433,23 @@ func assign_job(p: Person) -> void:
 			best = i
 	p.job = {"career": best, "level": 0, "perf": 0.0}
 	var c: Dictionary = Defs.CAREERS[best]
-	msg("%s got a job as %s, $%d a day, starting at %d:00 on weekdays." % [p.first(), c["titles"][0], c["pay"][0], int(c["start"])], "chime")
+	p._msg("%s got a job as %s, $%d a day, starting at %d:00 on weekdays." % [p.first(), c["titles"][0], c["pay"][0], int(c["start"])], "chime")
 
 
-## Neighbours live by the same rules: couples have children, and new families move in
-## when the street empties out.
+## Empty lots are cleared, and new families move in when the street thins out.
 func _neighbourhood_day() -> void:
-	var seen := {}
-	for n in neighbours.duplicate():
-		if seen.has(n.household):
-			continue
-		seen[n.household] = true
-		var hh := household_of(n.household)
-		var adults := hh.filter(func(p): return p.stage() == "adult")
-		if adults.size() >= 2 and hh.size() < 4 and rng.randf() < 0.07 * age_rate:
-			var c := _make_child(adults[0], adults[1], false)
-			if known(adults[0]) or known(adults[1]):
-				msg("%s and %s next door had a child, %s." % [adults[0].first(), adults[1].first(), c.first()], "chime")
+	for id in households.keys():
+		var hh: Household = households[id]
+		if not hh.player and hh_count(hh) == 0:
+			hh.world.queue_free()
+			households.erase(id)
 	if neighbours.size() < 5 and rng.randf() < 0.5:
-		var before := neighbours.size()
 		_new_family(rng.randi_range(1, 2), false)
-		msg("The %s family moved in down the street." % neighbours[before].pname.split(" ")[1])
+		msg("The %s family moved in down the street." % households[next_hh - 1].family)
 
 
 func available_neighbour():
-	var off := neighbours.filter(func(n): return n.vstate == "off" and not n.busy_now(1.0))
+	var off := neighbours.filter(func(n): return n.vstate == "home" and not n.away and not n.busy_now(1.0))
 	if off.is_empty():
 		return null
 	return off[rng.randi() % off.size()]
@@ -420,11 +457,11 @@ func available_neighbour():
 
 ## Neighbours currently on, or heading to, the lot.
 func visitors() -> Array:
-	return neighbours.filter(func(n): return n.vstate in ["arriving", "waiting", "guest"] or (n.vstate == "stroll" and n.stroll_enter))
+	return neighbours.filter(func(n): return n.vstate in ["arriving", "waiting", "guest"] or (n.vstate in ["stroll", "heading"] and n.stroll_enter))
 
 
 func invite(caller: Person, who) -> void:
-	var n = who if who != null and is_instance_valid(who) and who.vstate == "off" else available_neighbour()
+	var n = who if who != null and is_instance_valid(who) and who.vstate == "home" and not who.away else available_neighbour()
 	if n == null:
 		msg("Nobody picked up.")
 		return
@@ -437,7 +474,9 @@ func invite(caller: Person, who) -> void:
 
 
 func expect_child(a: Person, b) -> void:
-	pending.append({"at": (day + 1) * 1440.0 + 8.0 * 60.0, "a": a.pid, "b": b.pid if b != null else -1})
+	pending.append({"at": (day + 1) * 1440.0 + 8.0 * 60.0, "hh": a.household, "a": a.pid, "b": b.pid if b != null else -1})
+	if not a.resident:
+		return
 	if b != null:
 		msg("%s and %s are expecting. A child joins the household tomorrow morning." % [a.first(), b.first()], "jingle")
 	else:
@@ -445,53 +484,54 @@ func expect_child(a: Person, b) -> void:
 
 
 func _by_pid(id: int):
-	for p in people:
+	for p in everyone():
 		if p.pid == id:
 			return p
 	return null
 
 
 func _spawn_child(pc: Dictionary) -> void:
+	var hh = households.get(int(pc["hh"]))
+	if hh == null:
+		return
 	var pa = _by_pid(int(pc["a"]))
 	var pb = _by_pid(int(pc["b"]))
-	var c := _make_child(pa, pb, true)
-	var inside := world.door_tile + Vector2i(0, -1)
-	c.tile = inside if world.walkable(inside) else world.exit_tile
-	c.position = world.tile_center(c.tile)
-	for p in people:
-		if p != c:
-			rel[_rk(p, c)] = 55.0 if (p == pa or p == pb) else 25.0
-	msg("%s has joined the %s household." % [c.first(), family], "jingle")
+	var c := _make_child(pa, pb, hh)
+	var inside: Vector2i = hh.world.door_tile + Vector2i(0, -1)
+	c.tile = inside if hh.world.walkable(inside) else hh.world.exit_tile
+	c.position = hh.world.tile_center(c.tile)
+	if hh.player:
+		msg("%s has joined the %s household." % [c.first(), family], "jingle")
+	elif (pa != null and known(pa)) or (pb != null and known(pb)):
+		msg("The %s family next door had a child, %s." % [hh.family, c.first()], "chime")
 
 
-## A newborn of one or two parents, in the same household as them.
-func _make_child(pa, pb, is_resident: bool) -> Person:
-	var fam: String = family if is_resident or pa == null else pa.pname.split(" ")[1]
-	var c := _make_person(next_pid, int(rng.randi()), fam, is_resident)
+## A newborn of one or two parents, joining the given household.
+func _make_child(pa, pb, hh: Household) -> Person:
+	var c := _make_person(next_pid, int(rng.randi()), hh.family, hh)
 	c.age = 0.0
 	if pa != null:
-		c.household = pa.household
 		var other: Person = pb if pb != null else pa
 		c.look["skin"] = pa.look["skin"].lerp(other.look["skin"], rng.randf())
 		c.look["hair"] = pa.look["hair"] if rng.randf() < 0.5 else other.look["hair"]
 		if pb != null:
 			for t in Defs.TRAITS:
 				c.traits[t] = clampi(int((pa.traits[t] + pb.traits[t]) / 2.0) + rng.randi_range(-2, 2), 1, 9)
-		for p in household_of(pa.household):
-			if p != c:
-				rel[_rk(p, c)] = 55.0 if (p == pa or p == pb) else 25.0
+	for p in household_of(hh.id):
+		if p != c:
+			rel[_rk(p, c)] = 55.0 if (p == pa or p == pb) else 25.0
 	c.refresh_look()
 	return c
 
 
 func on_death(p: Person, cause: String) -> void:
 	var on_lot: bool = not p.away
-	if p.resident or on_lot or known(p):
+	if p.resident or (on_lot and p.world == world) or known(p):
 		msg("%s has died of %s." % [p.pname if p.resident else "Your neighbour %s" % p.pname, cause], "toll")
 	if on_lot:
-		var t = world.free_tile_near(p.tile)
+		var t = p.world.free_tile_near(p.tile)
 		if t != null:
-			var g := world.add_object("grave", t.x, t.y, 0)
+			var g: SimObject = p.world.add_object("grave", t.x, t.y, 0)
 			g.label = p.pname
 	people.erase(p)
 	neighbours.erase(p)
@@ -518,12 +558,12 @@ func on_death(p: Person, cause: String) -> void:
 			ui.show_game_over()
 
 
-func remove_object(o: SimObject) -> void:
+func remove_object(o: SimObject, w: World = null) -> void:
 	for p in everyone():
 		if p.cur != null and (p.cur.get("obj") == o or p.cur.get("seat") == o):
 			p.cancel_current()
 		p.queue = p.queue.filter(func(a): return a.get("obj") != o)
-	world.remove_object(o)
+	(w if w != null else world).remove_object(o)
 
 
 func select(p: Person) -> void:
@@ -593,12 +633,15 @@ func cancel_action(p: Person, i: int) -> void:
 func save_game(quiet := false) -> void:
 	if over:
 		return
+	var hhs := []
+	for id in households:  # the player's household (id 0) was added first
+		var hh: Household = households[id]
+		hhs.append({"id": hh.id, "family": hh.family, "money": hh.money, "world": hh.world.save_state()})
 	var d := {
-		"v": 1, "seed": seed_base, "family": family, "minutes": minutes, "money": money, "rel": rel,
+		"v": 2, "seed": seed_base, "minutes": minutes, "rel": rel,
 		"next_pid": next_pid, "next_hh": next_hh, "welcomed": welcomed, "pending": pending, "free_will": free_will,
-		"world": world.save_state(),
-		"people": people.map(func(p): return p.save_state()),
-		"neighbours": neighbours.map(func(p): return p.save_state()),
+		"households": hhs,
+		"people": everyone().map(func(p): return p.save_state()),
 	}
 	var f := FileAccess.open(save_path, FileAccess.WRITE)
 	if f == null:
@@ -614,28 +657,29 @@ func _read_save():
 	if not FileAccess.file_exists(save_path):
 		return null
 	var d = JSON.parse_string(FileAccess.get_file_as_string(save_path))
-	if d is Dictionary and d.has("world") and d.has("people") and not d["people"].is_empty():
+	if d is Dictionary and d.get("v") == 2 and d.has("households") and int(d["households"][0]["id"]) == 0:
 		return d
 	return null
 
 
 func _load_household(d: Dictionary) -> void:
-	family = d["family"]
 	minutes = d["minutes"]
-	money = int(d["money"])
 	rel = d["rel"]
 	welcomed = d.get("welcomed", true)
 	free_will = d.get("free_will", true)
+	for hd in d["households"]:
+		var hh: Household = home if int(hd["id"]) == 0 else _add_household(int(hd["id"]), hd["world"])
+		hh.family = hd["family"]
+		hh.money = int(hd["money"])
+	family = home.family
 	for pc in d.get("pending", []):
-		pending.append({"at": float(pc["at"]), "a": int(pc["a"]), "b": int(pc["b"])})
+		pending.append({"at": float(pc["at"]), "hh": int(pc["hh"]), "a": int(pc["a"]), "b": int(pc["b"])})
 	for pd in d["people"]:
-		_make_person(int(pd["pid"]), int(pd["seed"]), family, true).load_state(pd)
-	for pd in d["neighbours"]:
-		_make_person(int(pd["pid"]), int(pd["seed"]), "", false).load_state(pd)
+		var hh = households.get(int(pd["household"]))
+		if hh != null:
+			_make_person(int(pd["pid"]), int(pd["seed"]), hh.family, hh).load_state(pd)
 	next_pid = maxi(next_pid, int(d.get("next_pid", 0)))
-	next_hh = int(d.get("next_hh", 1))
-	for n in neighbours:
-		next_hh = maxi(next_hh, n.household + 1)
+	next_hh = maxi(next_hh, int(d.get("next_hh", 1)))
 	rng.seed = seed_base + int(minutes)
 
 
@@ -782,7 +826,7 @@ func _click_live(mpos: Vector2) -> void:
 			continue
 		if it.get("special", "") == "invite":
 			for n in neighbours:
-				if n.vstate == "off":
+				if n.vstate == "home" and not n.away:
 					var a: Dictionary = selected.act_use(o, it)
 					a["who"] = n
 					a["label"] = "Invite %s" % n.first()
@@ -825,8 +869,8 @@ func _placeable(a: Vector2i) -> bool:
 	if not world.can_place(buy_kind, a.x, a.y, buy_rot):
 		return false
 	var d := world.kind_dims(buy_kind, buy_rot)
-	for p in everyone():
-		if not p.away and Rect2i(a, d).has_point(p.tile):
+	for p in present(world):
+		if Rect2i(a, d).has_point(p.tile):
 			return false
 	return money >= Defs.OBJECTS[buy_kind]["price"]
 
@@ -976,21 +1020,20 @@ func _sample() -> void:
 
 
 func _report() -> void:
-	print("=== %d days simulated, money $%d, household %d, over=%s ===" % [day, money, people.size(), over])
-	for p in people:
-		var line := "%-10s" % p.first()
-		for n in Defs.NEEDS:
-			var s: Array = _samples.get(p.first() + "." + n, [0.0, 1, 0.0])
-			line += " %s avg %2d min %2d |" % [n.substr(0, 4), int(s[0] / s[1]), int(s[2])]
-		print(line)
-		print("   %s age %.1f  job: %s  skills: %s" % [p.stage(), p.age, p.job, p.skills])
-		print("   actions: ", p.stats)
-	for n in neighbours:
-		print("   neighbour %s: %s" % [n.pname, n.stats])
-	print("   relationships: ", rel)
-	for n in neighbours:
-		print("   neighbour hh%d %s: %s age %.1f job %s" % [n.household, n.pname, n.stage(), n.age, n.job != null])
-	print("   memorials: ", world.objects.filter(func(o): return o.kind == "grave").map(func(o): return o.label))
+	print("=== %d days simulated, household %d, over=%s ===" % [day, people.size(), over])
+	for id in households:
+		var hh: Household = households[id]
+		print("--- household %d %s%s: $%d, %d objects" % [id, hh.family, " (player)" if hh.player else "", hh.money, hh.world.objects.size()])
+		for p in household_of(id):
+			var line := "  %-9s %-5s age %4.1f %s |" % [p.first(), p.stage(), p.age, p.vstate]
+			for n in Defs.NEEDS:
+				line += " %s %2d" % [n.substr(0, 3), int(p.needs[n])]
+			print(line)
+			var jb := "none"
+			if p.job != null:
+				jb = "%s L%d" % [Defs.CAREERS[p.job.career]["name"], p.job.level]
+			print("      job %s  away %s cur %s queue %d  actions %s" % [jb, p.away, [p.cur.kind, p.cur.state, p.cur.label, p.cur.get("tries")] if p.cur != null else "-", p.queue.size(), p.stats])
+	print("   memorials: ", households.values().map(func(h): return h.world.objects.filter(func(o): return o.kind == "grave").map(func(o): return o.label)))
 	if OS.has_environment("TP_SAVE"):
 		save_game(true)
 		print("   saved to ", save_path)

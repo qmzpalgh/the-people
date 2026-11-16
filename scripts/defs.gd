@@ -158,7 +158,7 @@ const OBJECTS := {
 	"bush": {"name": "Bush", "price": 40, "cat": "Garden", "size": Vector2i(1, 1), "room": 1.0, "h": 0.8},
 	"flowers": {"name": "Flower bed", "price": 25, "cat": "Garden", "size": Vector2i(1, 1), "room": 2.0, "h": 0.4},
 	"grave": {
-		"name": "Memorial", "price": 0, "cat": "", "size": Vector2i(1, 1), "room": 0.0, "h": 1.0,
+		"name": "Memorial", "price": 0, "cat": "", "size": Vector2i(1, 1), "room": 0.0, "h": 1.0, "soft": true,
 		"acts": [{"id": "mourn", "label": "Remember them", "needs": {"social": 10.0}, "dur": 0.3, "auto": false, "bubble": "..."}],
 	},
 	"puddle": {
