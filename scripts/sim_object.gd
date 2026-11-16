@@ -8,9 +8,14 @@ var tile := Vector2i.ZERO  # min corner of the footprint
 var rot := 0
 var users: Array = []  # fixed-size, null = free slot
 var alive := true
+var oseed := 0
+var label := ""  # e.g. whose memorial this is
 
 
-func setup(k: String, t: Vector2i, r: int, rng: RandomNumberGenerator) -> void:
+func setup(k: String, t: Vector2i, r: int, seed_v: int) -> void:
+	oseed = seed_v
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_v
 	kind = k
 	def = Defs.OBJECTS[k]
 	tile = t

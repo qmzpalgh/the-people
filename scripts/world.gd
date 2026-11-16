@@ -34,7 +34,7 @@ var _obj_root: Node3D
 var _floor_mats: Array = []
 
 
-func setup(seed_v: int) -> void:
+func setup(seed_v: int, data = null) -> void:
 	rng.seed = seed_v
 	floors.resize(W * H)
 	room_of.resize(W * H)
@@ -48,12 +48,15 @@ func setup(seed_v: int) -> void:
 		var f: Dictionary = Defs.FLOORS[i]
 		_floor_mats.append(Meshes.tex_mat(f["tex"], f["tint"], seed_v + i) if f.has("tex") else null)
 	_build_scenery(seed_v)
-	for attempt in 40:
-		_clear()
-		_gen_house()
-		if _validate():
-			break
-	_gen_garden()
+	if data != null:
+		load_state(data)
+	else:
+		for attempt in 40:
+			_clear()
+			_gen_house()
+			if _validate():
+				break
+		_gen_garden()
 	rebuild_walls()
 	rebuild_floors()
 	nav_dirty = true
@@ -118,9 +121,9 @@ func can_place(kind: String, x: int, y: int, r: int) -> bool:
 	return true
 
 
-func add_object(kind: String, x: int, y: int, r: int) -> SimObject:
+func add_object(kind: String, x: int, y: int, r: int, oseed := -1) -> SimObject:
 	var o := SimObject.new()
-	o.setup(kind, Vector2i(x, y), r, rng)
+	o.setup(kind, Vector2i(x, y), r, oseed if oseed >= 0 else int(rng.randi()))
 	_obj_root.add_child(o)
 	var d: Dictionary = soft if o.def.get("soft", false) else occ
 	for t in o.footprint():
@@ -793,3 +796,57 @@ func free_tiles_in(type: String) -> Array:
 				if not occ.has(Vector2i(x, y)):
 					out.append(Vector2i(x, y))
 	return out
+
+
+# ---------------------------------------------------------------- persistence
+
+func save_state() -> Dictionary:
+	var w := []
+	for k in walls:
+		w.append([k.x, k.y, k.z, walls[k]])
+	var objs := []
+	for o in objects:
+		objs.append({"k": o.kind, "x": o.tile.x, "y": o.tile.y, "r": o.rot, "s": o.oseed, "label": o.label})
+	var rms := []
+	for rm in rooms:
+		var r: Rect2i = rm["rect"]
+		rms.append({"rect": [r.position.x, r.position.y, r.size.x, r.size.y], "type": rm["type"]})
+	return {
+		"house": [house.position.x, house.position.y, house.size.x, house.size.y],
+		"rooms": rms, "door": [door_tile.x, door_tile.y], "exit": [exit_tile.x, exit_tile.y],
+		"wall_color": wall_color.to_html(), "floors": Array(floors), "walls": w, "objects": objs,
+		"rng": str(rng.state),
+	}
+
+
+func load_state(d: Dictionary) -> void:
+	_clear()
+	var h: Array = d["house"]
+	house = Rect2i(int(h[0]), int(h[1]), int(h[2]), int(h[3]))
+	for rm in d["rooms"]:
+		var r: Array = rm["rect"]
+		rooms.append({"rect": Rect2i(int(r[0]), int(r[1]), int(r[2]), int(r[3])), "type": rm["type"]})
+	door_tile = Vector2i(int(d["door"][0]), int(d["door"][1]))
+	exit_tile = Vector2i(int(d["exit"][0]), int(d["exit"][1]))
+	wall_color = Color.html(d["wall_color"])
+	var fl: Array = d["floors"]
+	for i in mini(fl.size(), W * H):
+		floors[i] = int(fl[i])
+	for w in d["walls"]:
+		walls[Vector3i(int(w[0]), int(w[1]), int(w[2]))] = int(w[3])
+	for o in d["objects"]:
+		if Defs.OBJECTS.has(o["k"]):
+			var obj := add_object(o["k"], int(o["x"]), int(o["y"]), int(o["r"]), int(o["s"]))
+			obj.label = o.get("label", "")
+	rng.state = int(d.get("rng", "1"))
+
+
+## Nearest tile to `t` where a 1x1 object can go.
+func free_tile_near(t: Vector2i):
+	for r in 6:
+		for dy in range(-r, r + 1):
+			for dx in range(-r, r + 1):
+				var n := t + Vector2i(dx, dy)
+				if can_place("grave", n.x, n.y, 0):
+					return n
+	return null

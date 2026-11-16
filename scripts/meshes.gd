@@ -257,6 +257,15 @@ static func build_object(p: Node3D, kind: String, rng: RandomNumberGenerator) ->
 				var h := rng.randf_range(0.15, 0.32)
 				box(p, Vector3(0.02, h, 0.02), pos + Vector3(0, h / 2.0, 0), LEAF)
 				ball(p, 0.06, pos + Vector3(0, h, 0), fc.lightened(rng.randf() * 0.3))
+		"grave":
+			var stone := Color(0.62, 0.63, 0.66)
+			box(p, Vector3(0.6, 0.1, 0.3), Vector3(0, 0.05, -0.2), stone.darkened(0.2))
+			box(p, Vector3(0.46, 0.6, 0.12), Vector3(0, 0.4, -0.2), stone)
+			cyl(p, 0.23, 0.23, 0.12, Vector3(0, 0.7, -0.2), stone).rotation.x = PI / 2.0
+			for i in 4:
+				var fp := Vector3(rng.randf_range(-0.25, 0.25), 0, rng.randf_range(0.05, 0.3))
+				box(p, Vector3(0.02, 0.16, 0.02), fp + Vector3(0, 0.08, 0), LEAF)
+				ball(p, 0.05, fp + Vector3(0, 0.17, 0), Color(0.95, 0.95, 0.85))
 		"puddle":
 			cyl(p, 0.36, 0.36, 0.012, Vector3(0, 0.02, 0), Color(0.45, 0.65, 0.85, 0.75))
 			cyl(p, 0.2, 0.2, 0.012, Vector3(0.25, 0.02, 0.15), Color(0.45, 0.65, 0.85, 0.75))

@@ -1,13 +1,21 @@
 extends Node3D
-## Game controller: clock, money, modes (live / buy / build), input and lighting.
+## Game controller: clock, money, household and neighbours, modes (live / buy / build),
+## input, lighting, saving and loading.
 
 const MULT := [0.0, 1.0, 4.0, 12.0]
 
+static var skip_load := false
+
+var save_path := "user://the_people_save.json"
 var world: World
 var cam: Cam
 var ui: UI
-var people: Array = []
+var sfx: Sfx
+var people: Array = []      # household
+var neighbours: Array = []
+var pending: Array = []     # children on the way: {at, a, b}
 var selected: Person
+var family := ""
 var money := 2500
 var minutes := 7.5 * 60.0  # game minutes since day 0, 00:00
 var speed := 1
@@ -17,6 +25,12 @@ var free_will := true
 var rel := {}
 var rdt := 0.0
 var rng := RandomNumberGenerator.new()
+var seed_base := 0
+var next_pid := 0
+var next_hh := 1
+var welcomed := false
+var over := false
+var age_rate := 1.0
 
 var buy_kind := ""
 var buy_rot := 0
@@ -32,6 +46,7 @@ var sun: DirectionalLight3D
 var env: Environment
 var sky_mat: ProceduralSkyMaterial
 var _last_day := 0
+var _last_hour := -1
 var _room_t := 0.0
 var _light_t := -1.0
 
@@ -48,30 +63,39 @@ func hour() -> float:
 	return fmod(minutes, 1440.0) / 60.0
 
 
+func everyone() -> Array:
+	return people + neighbours
+
+
 func _ready() -> void:
+	if OS.has_environment("TP_SAVE"):
+		save_path = OS.get_environment("TP_SAVE")
+	var testing := OS.has_environment("TP_TEST") or OS.has_environment("TP_SHOT")
+	var fresh := skip_load or (testing and not OS.has_environment("TP_SAVE")) or OS.has_environment("TP_FRESH")
+	skip_load = false
+	if testing and not OS.has_environment("TP_SAVE"):
+		save_path = "user://tp_test_save.json"
+	var data = null if fresh else _read_save()
 	var seed_v := randi()
 	if OS.has_environment("TP_SEED"):
 		seed_v = int(OS.get_environment("TP_SEED"))
+	if data != null:
+		seed_v = int(data["seed"])
+	seed_base = seed_v
 	rng.seed = seed_v
+	if OS.has_environment("TP_AGE"):
+		age_rate = float(OS.get_environment("TP_AGE"))
 	get_viewport().gui_embed_subwindows = true
+	sfx = Sfx.new()
+	add_child(sfx)
 	_build_env()
 	world = World.new()
 	add_child(world)
-	world.setup(seed_v)
-	var family := Defs.surname(rng)
-	var spots := world.free_tiles_in("living")
-	for i in rng.randi_range(2, 3):
-		var p := Person.new()
-		p.setup(self, world, i, seed_v * 7 + i * 131, family)
-		p.tile = spots[rng.randi() % spots.size()]
-		p.position = world.tile_center(p.tile)
-		p.rotation.y = rng.randf() * TAU
-		add_child(p)
-		people.append(p)
-	for a in people:
-		for b in people:
-			if a.pid < b.pid:
-				rel[_rk(a, b)] = rng.randf_range(5.0, 45.0)
+	world.setup(seed_v, data["world"] if data != null else null)
+	if data != null:
+		_load_household(data)
+	else:
+		_new_household()
 	cam = Cam.new()
 	add_child(cam)
 	cam.position = Vector3(world.house.get_center().x + 0.5, 0, world.house.get_center().y + 1.0)
@@ -86,17 +110,28 @@ func _ready() -> void:
 	ui = UI.new()
 	ui.game = self
 	add_child(ui)
-	select(people[0])
+	if not people.is_empty():
+		select(people[0])
 	world.update_room_scores()
 	_update_light(true)
-	msg("Welcome, %s family! Click an object to use it, or let them live on their own." % family)
+	_last_day = day
+	if data != null:
+		msg("Welcome back, %s household." % family)
+	else:
+		msg("Meet the %s household. Click things to give orders, or just watch. Press H for controls." % family)
 	if OS.has_environment("TP_TEST"):
 		_test_days = int(OS.get_environment("TP_TEST"))
-		for p in people:
-			if p.pid != 0:
-				assign_job(p)
+		sfx.set_muted(true)
+		if data == null:
+			for p in people:
+				if p.pid != 0:
+					assign_job(p)
+			if people.size() >= 2:
+				add_rel(people[0], people[1], 80.0)
+				expect_child(people[0], people[1])
 	if OS.has_environment("TP_SHOT"):
 		_shot = OS.get_environment("TP_SHOT")
+		sfx.set_muted(true)
 		speed = 3
 		if OS.has_environment("TP_MODE"):
 			set_mode(OS.get_environment("TP_MODE"))
@@ -104,6 +139,75 @@ func _ready() -> void:
 			toggle_walls()
 		if OS.has_environment("TP_HOUR"):
 			minutes = float(OS.get_environment("TP_HOUR")) * 60.0
+		if OS.has_environment("TP_UI"):
+			ui.debug_open(OS.get_environment("TP_UI"))
+
+
+func _make_person(id: int, sv: int, fam: String, is_resident: bool) -> Person:
+	var p := Person.new()
+	p.setup(self, world, id, sv, fam, is_resident)
+	add_child(p)
+	if is_resident:
+		people.append(p)
+	else:
+		p.away = true
+		p.visible = false
+		neighbours.append(p)
+	next_pid = maxi(next_pid, id + 1)
+	return p
+
+
+func _new_household() -> void:
+	family = Defs.surname(rng)
+	var spots := world.free_tiles_in("living")
+	for i in rng.randi_range(2, 3):
+		var p := _make_person(i, seed_base * 7 + i * 131, family, true)
+		p.tile = spots[rng.randi() % spots.size()]
+		p.position = world.tile_center(p.tile)
+		p.rotation.y = rng.randf() * TAU
+	for a in people:
+		for b in people:
+			if a.pid < b.pid:
+				rel[_rk(a, b)] = rng.randf_range(5.0, 45.0)
+	next_pid = 100
+	for i in 3:
+		_new_family(rng.randi_range(1, 3), true)
+
+
+## A neighbouring household: one or two adults (or elders) and sometimes children.
+func _new_family(size: int, established: bool) -> void:
+	var fam := Defs.surname(rng)
+	while fam == family or neighbours.any(func(n): return n.pname.ends_with(" " + fam)):
+		fam = Defs.surname(rng)
+	var members := []
+	for i in size:
+		var n := _make_person(next_pid, int(rng.randi()), fam, false)
+		n.household = next_hh
+		if i < 2:
+			var elders := established and i == 0 and rng.randf() < 0.3
+			n.age = rng.randf_range(Defs.ELDER_AT, Defs.ELDER_AT + 6.0) if elders else rng.randf_range(8.0, 24.0)
+			if members.size() == 1 and members[0].stage() == "elder":
+				n.age = rng.randf_range(Defs.ELDER_AT - 4.0, Defs.ELDER_AT + 6.0)
+			if n.stage() == "adult" and rng.randf() < 0.75:
+				n.job = {"career": rng.randi() % Defs.CAREERS.size(), "level": 0, "perf": 0.0}
+		else:
+			n.age = rng.randf_range(0.0, Defs.CHILD_DAYS - 0.5)
+		n.refresh_look()
+		for m in members:
+			rel[_rk(m, n)] = rng.randf_range(50.0, 90.0)
+		members.append(n)
+	next_hh += 1
+
+
+func known(p: Person) -> bool:
+	for o in people:
+		if absf(get_rel(o, p)) >= 5.0:
+			return true
+	return false
+
+
+func household_of(id: int) -> Array:
+	return everyone().filter(func(p): return p.household == id)
 
 
 func _build_env() -> void:
@@ -142,6 +246,7 @@ func _update_light(force := false) -> void:
 	sky_mat.sky_horizon_color = Color(0.08, 0.09, 0.18).lerp(Color(0.68, 0.8, 0.92), soft).lerp(Color(0.95, 0.6, 0.4), (1.0 - dayf) * soft)
 	sky_mat.ground_horizon_color = sky_mat.sky_horizon_color
 	sky_mat.ground_bottom_color = Color(0.03, 0.05, 0.04).lerp(Color(0.2, 0.3, 0.2), soft)
+	sfx.set_day(soft)
 	var n := soft < 0.35
 	if n != world.night:
 		world.set_night(n)
@@ -157,13 +262,13 @@ func _process(delta: float) -> void:
 			_step(1.0 / 60.0, 1.0)
 			if int(minutes) % 60 == 0:
 				_sample()
-		if day >= _test_days:
+		if day >= _test_days or over:
 			_report()
 			get_tree().quit()
 			return
 	else:
 		var m: float = MULT[speed]
-		if m > 0.0:
+		if m > 0.0 and not over:
 			_step(delta * m / 60.0, delta * m)
 	_update_light()
 	_update_ghost()
@@ -179,44 +284,86 @@ func _process(delta: float) -> void:
 
 func _step(dh: float, ds: float) -> void:
 	minutes += dh * 60.0
-	for p in people:
+	for p in everyone():
 		p.tick(dh, ds)
+	if over:
+		return
 	var h := hour()
 	if day % 7 < 5:
 		for p in people:
-			if p.job == null or p.away or p.work_flag_day == day:
+			if p.away or p.work_flag_day == day:
 				continue
-			var c: Dictionary = Defs.CAREERS[p.job.career]
-			if h >= c["start"] - 1.0 and h < c["start"] + 2.0:
+			var c = p.sched()
+			if c != null and h >= c["start"] - 1.0 and h < c["start"] + 2.0:
 				p.work_flag_day = day
 				p.go_to_work()
-				msg("%s is heading to work." % p.first())
 	_room_t -= dh
 	if _room_t <= 0.0:
 		_room_t = 0.2
 		world.update_room_scores()
+	for pc in pending.duplicate():
+		if minutes >= pc["at"]:
+			pending.erase(pc)
+			_spawn_child(pc)
+	if int(h) != _last_hour:
+		_last_hour = int(h)
+		_hourly(int(h))
 	if day != _last_day:
 		_last_day = day
-		for p in people:
-			if p.job != null and (day - 1) % 7 < 5 and p.work_day != day - 1:
-				p.job.perf -= 15.0
-				msg("%s missed work yesterday." % p.first())
-		if day % 3 == 0:
-			var value := 0
-			for o in world.objects:
-				value += o.def["price"]
-			var bill := int(value * 0.03) + 25 * people.size()
-			money -= bill
-			msg("Bills paid: $%d." % bill)
+		_new_day()
+
+
+func _hourly(h: int) -> void:
+	if h < 9 or h > 19:
+		return
+	var home := people.filter(func(p): return not p.away)
+	if home.is_empty():
+		return
+	if not welcomed and h >= 10:
+		welcomed = true
+		var n = available_neighbour()
+		if n != null:
+			n.start_visit(true)
+			msg("A neighbour, %s, is coming by to say hello." % n.pname)
+		return
+	if rng.randf() < 0.12:
+		var n = available_neighbour()
+		if n != null:
+			var best := -100.0
+			for p in people:
+				best = maxf(best, get_rel(p, n))
+			n.start_visit(visitors().is_empty() and rng.randf() < 0.35 + clampf(best, 0.0, 60.0) / 150.0)
+
+
+func _new_day() -> void:
+	for p in people:
+		if p.job != null and (day - 1) % 7 < 5 and p.work_day != day - 1:
+			p.job.perf -= 15.0
+			msg("%s missed work yesterday." % p.first())
+		if p.stage() == "elder":
+			money += Defs.PENSION
+	_neighbourhood_day()
+	if day % 3 == 0:
+		var value := 0
+		for o in world.objects:
+			value += o.def["price"]
+		var bill := int(value * 0.03) + 25 * people.size()
+		money -= bill
+		msg("Bills paid: $%d." % bill)
+	if _test_days == 0 and _shot == "":
+		save_game(true)
 
 
 # ---------------------------------------------------------------- game API
 
-func msg(text: String) -> void:
+func msg(text: String, snd := "") -> void:
 	if _test_days > 0:
 		print("[d%d %05.2f] %s" % [day, hour(), text])
-	elif ui != null:
+		return
+	if ui != null:
 		ui.push_msg(text)
+	if snd != "":
+		sfx.play(snd)
 
 
 func _rk(a: Person, b: Person) -> String:
@@ -241,11 +388,138 @@ func assign_job(p: Person) -> void:
 			best = i
 	p.job = {"career": best, "level": 0, "perf": 0.0}
 	var c: Dictionary = Defs.CAREERS[best]
-	msg("%s got a job as %s (%s, $%d/day, starts %d:00)." % [p.first(), c["titles"][0], c["name"], c["pay"][0], int(c["start"])])
+	msg("%s got a job as %s, $%d a day, starting at %d:00 on weekdays." % [p.first(), c["titles"][0], c["pay"][0], int(c["start"])], "chime")
+
+
+## Neighbours live by the same rules: couples have children, and new families move in
+## when the street empties out.
+func _neighbourhood_day() -> void:
+	var seen := {}
+	for n in neighbours.duplicate():
+		if seen.has(n.household):
+			continue
+		seen[n.household] = true
+		var hh := household_of(n.household)
+		var adults := hh.filter(func(p): return p.stage() == "adult")
+		if adults.size() >= 2 and hh.size() < 4 and rng.randf() < 0.07 * age_rate:
+			var c := _make_child(adults[0], adults[1], false)
+			if known(adults[0]) or known(adults[1]):
+				msg("%s and %s next door had a child, %s." % [adults[0].first(), adults[1].first(), c.first()], "chime")
+	if neighbours.size() < 5 and rng.randf() < 0.5:
+		var before := neighbours.size()
+		_new_family(rng.randi_range(1, 2), false)
+		msg("The %s family moved in down the street." % neighbours[before].pname.split(" ")[1])
+
+
+func available_neighbour():
+	var off := neighbours.filter(func(n): return n.vstate == "off" and not n.busy_now(1.0))
+	if off.is_empty():
+		return null
+	return off[rng.randi() % off.size()]
+
+
+## Neighbours currently on, or heading to, the lot.
+func visitors() -> Array:
+	return neighbours.filter(func(n): return n.vstate in ["arriving", "waiting", "guest"] or (n.vstate == "stroll" and n.stroll_enter))
+
+
+func invite(caller: Person, who) -> void:
+	var n = who if who != null and is_instance_valid(who) and who.vstate == "off" else available_neighbour()
+	if n == null:
+		msg("Nobody picked up.")
+		return
+	if rng.randf() < 0.6 + get_rel(caller, n) / 120.0:
+		n.start_visit(true)
+		add_rel(caller, n, 1.0)
+		msg("%s is on the way over." % n.pname, "chime")
+	else:
+		msg("%s can't come over right now." % n.pname)
+
+
+func expect_child(a: Person, b) -> void:
+	pending.append({"at": (day + 1) * 1440.0 + 8.0 * 60.0, "a": a.pid, "b": b.pid if b != null else -1})
+	if b != null:
+		msg("%s and %s are expecting. A child joins the household tomorrow morning." % [a.first(), b.first()], "jingle")
+	else:
+		msg("The adoption went through. A child joins the household tomorrow morning.", "jingle")
+
+
+func _by_pid(id: int):
+	for p in people:
+		if p.pid == id:
+			return p
+	return null
+
+
+func _spawn_child(pc: Dictionary) -> void:
+	var pa = _by_pid(int(pc["a"]))
+	var pb = _by_pid(int(pc["b"]))
+	var c := _make_child(pa, pb, true)
+	var inside := world.door_tile + Vector2i(0, -1)
+	c.tile = inside if world.walkable(inside) else world.exit_tile
+	c.position = world.tile_center(c.tile)
+	for p in people:
+		if p != c:
+			rel[_rk(p, c)] = 55.0 if (p == pa or p == pb) else 25.0
+	msg("%s has joined the %s household." % [c.first(), family], "jingle")
+
+
+## A newborn of one or two parents, in the same household as them.
+func _make_child(pa, pb, is_resident: bool) -> Person:
+	var fam: String = family if is_resident or pa == null else pa.pname.split(" ")[1]
+	var c := _make_person(next_pid, int(rng.randi()), fam, is_resident)
+	c.age = 0.0
+	if pa != null:
+		c.household = pa.household
+		var other: Person = pb if pb != null else pa
+		c.look["skin"] = pa.look["skin"].lerp(other.look["skin"], rng.randf())
+		c.look["hair"] = pa.look["hair"] if rng.randf() < 0.5 else other.look["hair"]
+		if pb != null:
+			for t in Defs.TRAITS:
+				c.traits[t] = clampi(int((pa.traits[t] + pb.traits[t]) / 2.0) + rng.randi_range(-2, 2), 1, 9)
+		for p in household_of(pa.household):
+			if p != c:
+				rel[_rk(p, c)] = 55.0 if (p == pa or p == pb) else 25.0
+	c.refresh_look()
+	return c
+
+
+func on_death(p: Person, cause: String) -> void:
+	var on_lot: bool = not p.away
+	if p.resident or on_lot or known(p):
+		msg("%s has died of %s." % [p.pname if p.resident else "Your neighbour %s" % p.pname, cause], "toll")
+	if on_lot:
+		var t = world.free_tile_near(p.tile)
+		if t != null:
+			var g := world.add_object("grave", t.x, t.y, 0)
+			g.label = p.pname
+	people.erase(p)
+	neighbours.erase(p)
+	for o in everyone():
+		if o.cur != null and o.cur.get("other") == p:
+			o.cancel_current()
+		o.queue = o.queue.filter(func(a): return a.get("other") != p)
+	for o in people:
+		var r := get_rel(o, p)
+		if r > 10.0:
+			o.needs.fun = maxf(0.0, o.needs.fun - r * 0.4)
+			o.needs.social = maxf(0.0, o.needs.social - r * 0.3)
+			o.say("...", 4.0)
+	p.queue_free()
+	if selected == p:
+		selected = null
+		if not people.is_empty():
+			select(people[0])
+	if people.is_empty() and not over:
+		over = true
+		for n in neighbours:
+			n.leave()
+		if ui != null:
+			ui.show_game_over()
 
 
 func remove_object(o: SimObject) -> void:
-	for p in people:
+	for p in everyone():
 		if p.cur != null and (p.cur.get("obj") == o or p.cur.get("seat") == o):
 			p.cancel_current()
 		p.queue = p.queue.filter(func(a): return a.get("obj") != o)
@@ -263,6 +537,8 @@ func set_speed(s: int) -> void:
 	if s == 0 and speed != 0:
 		prev_speed = speed
 	speed = s
+	for p in everyone():
+		p.loop_p.stream_paused = s == 0
 
 
 func set_mode(m: String) -> void:
@@ -291,6 +567,13 @@ func set_buy(kind: String) -> void:
 	ghost_plate.material_override = ghost_mat
 
 
+func clear_tool() -> void:
+	set_buy("")
+	tool = ""
+	sell = false
+	drag_start = null
+
+
 func toggle_walls() -> void:
 	world.walls_up = not world.walls_up
 	world.rebuild_walls()
@@ -303,6 +586,69 @@ func cancel_action(p: Person, i: int) -> void:
 		var qi := i - (1 if p.cur != null else 0)
 		if qi >= 0 and qi < p.queue.size():
 			p.queue.remove_at(qi)
+
+
+# ---------------------------------------------------------------- saving
+
+func save_game(quiet := false) -> void:
+	if over:
+		return
+	var d := {
+		"v": 1, "seed": seed_base, "family": family, "minutes": minutes, "money": money, "rel": rel,
+		"next_pid": next_pid, "next_hh": next_hh, "welcomed": welcomed, "pending": pending, "free_will": free_will,
+		"world": world.save_state(),
+		"people": people.map(func(p): return p.save_state()),
+		"neighbours": neighbours.map(func(p): return p.save_state()),
+	}
+	var f := FileAccess.open(save_path, FileAccess.WRITE)
+	if f == null:
+		msg("Could not write the save file.", "error")
+		return
+	f.store_string(JSON.stringify(d))
+	f.close()
+	if not quiet:
+		msg("Saved.", "chime")
+
+
+func _read_save():
+	if not FileAccess.file_exists(save_path):
+		return null
+	var d = JSON.parse_string(FileAccess.get_file_as_string(save_path))
+	if d is Dictionary and d.has("world") and d.has("people") and not d["people"].is_empty():
+		return d
+	return null
+
+
+func _load_household(d: Dictionary) -> void:
+	family = d["family"]
+	minutes = d["minutes"]
+	money = int(d["money"])
+	rel = d["rel"]
+	welcomed = d.get("welcomed", true)
+	free_will = d.get("free_will", true)
+	for pc in d.get("pending", []):
+		pending.append({"at": float(pc["at"]), "a": int(pc["a"]), "b": int(pc["b"])})
+	for pd in d["people"]:
+		_make_person(int(pd["pid"]), int(pd["seed"]), family, true).load_state(pd)
+	for pd in d["neighbours"]:
+		_make_person(int(pd["pid"]), int(pd["seed"]), "", false).load_state(pd)
+	next_pid = maxi(next_pid, int(d.get("next_pid", 0)))
+	next_hh = int(d.get("next_hh", 1))
+	for n in neighbours:
+		next_hh = maxi(next_hh, n.household + 1)
+	rng.seed = seed_base + int(minutes)
+
+
+func load_game() -> void:
+	if _read_save() == null:
+		msg("There is no saved household yet. Press F5 to save one.", "error")
+		return
+	get_tree().reload_current_scene()
+
+
+func new_game() -> void:
+	skip_load = true
+	get_tree().reload_current_scene()
 
 
 # ---------------------------------------------------------------- picking
@@ -324,11 +670,11 @@ func pick_person(mpos: Vector2):
 	var d := cam.cam.project_ray_normal(mpos)
 	var best = null
 	var bt := 1e9
-	for p in people:
-		if p.away:
+	for p in everyone():
+		if not p.visible:
 			continue
 		for hy in [0.5, 1.0, 1.5]:
-			var v: Vector3 = p.position + Vector3(0, hy, 0) - o
+			var v: Vector3 = p.position + Vector3(0, hy * p.h_scale, 0) - o
 			var t := v.dot(d)
 			if (v - d * t).length() < 0.4 and t < bt:
 				bt = t
@@ -354,16 +700,21 @@ func _unhandled_input(e: InputEvent) -> void:
 			KEY_1: set_speed(1)
 			KEY_2: set_speed(2)
 			KEY_3: set_speed(3)
-			KEY_TAB: select(people[(people.find(selected) + 1) % people.size()])
+			KEY_TAB:
+				if not people.is_empty():
+					select(people[(people.find(selected) + 1) % people.size()])
 			KEY_R: buy_rot = (buy_rot + 1) % 4
 			KEY_F: toggle_walls()
+			KEY_H: ui.toggle_help()
+			KEY_M: sfx.set_muted(not sfx.muted)
+			KEY_F5: save_game()
+			KEY_F9: load_game()
 			KEY_ESCAPE:
-				set_buy("")
-				tool = ""
-				sell = false
-				drag_start = null
+				clear_tool()
 				ui.build_side()
 	elif e is InputEventMouseButton:
+		if over:
+			return
 		if e.button_index == MOUSE_BUTTON_LEFT:
 			if e.pressed:
 				_click(e.position)
@@ -375,10 +726,7 @@ func _unhandled_input(e: InputEvent) -> void:
 				if world.walkable(t) and selected != null:
 					selected.enqueue(selected.act_goto(t))
 			else:
-				set_buy("")
-				tool = ""
-				sell = false
-				drag_start = null
+				clear_tool()
 				ui.build_side()
 	elif e is InputEventMouseMotion and e.button_mask & MOUSE_BUTTON_MASK_LEFT:
 		if mode == "build" and tool.begins_with("floor"):
@@ -396,28 +744,75 @@ func _click_live(mpos: Vector2) -> void:
 	var p = pick_person(mpos)
 	var items := []
 	if p != null:
-		if p == selected or selected == null or selected.away:
+		if p.resident and (p == selected or selected == null or selected.away):
 			select(p)
 			return
-		items.append(["Switch to %s" % p.first(), select.bind(p)])
+		if selected == null:
+			return
 		var r := get_rel(selected, p)
+		var title := "%s, %s, %s" % [p.pname, p.stage(), _rel_word(r)]
+		if not p.resident and p.vstate == "stroll":
+			if not p.stroll_enter:
+				items.append(["Invite in", _wave_in.bind(p)])
+			ui.show_menu(title, items, mpos)
+			return
+		if p.resident:
+			items.append(["Switch to %s" % p.first(), select.bind(p)])
+		elif p.vstate == "waiting":
+			items.append(["Greet", selected.enqueue.bind(selected.act_social(p, Defs.GREET))])
 		for sd in Defs.SOCIALS:
-			if r >= sd["min_rel"]:
-				items.append([sd["label"], selected.enqueue.bind(selected.act_social(p, sd))])
-		ui.show_menu("%s  (relationship %+d)" % [p.pname, int(r)], items, mpos)
+			if r < sd["min_rel"]:
+				continue
+			if sd["id"] == "baby" and not selected.can_have_child_with(p):
+				continue
+			items.append([sd["label"], selected.enqueue.bind(selected.act_social(p, sd))])
+		if not p.resident and p.vstate == "guest":
+			items.append(["Ask to leave", p.leave])
+		ui.show_menu(title, items, mpos)
 		return
 	var o = pick_object(mpos)
 	if o == null or selected == null:
 		return
 	for it in o.def.get("acts", []):
-		if it.get("hidden", false):
+		if it.get("hidden", false) or (it.get("adult", false) and selected.stage() == "child"):
 			continue
-		if it.get("cond", "") == "no_job" and selected.job != null:
+		if it.get("cond", "") == "no_job" and (selected.job != null or selected.stage() != "adult"):
 			continue
 		if it.has("req") and world.nearest_object(it["req"], o.tile) == null:
 			continue
+		if it.get("special", "") == "invite":
+			for n in neighbours:
+				if n.vstate == "off":
+					var a: Dictionary = selected.act_use(o, it)
+					a["who"] = n
+					a["label"] = "Invite %s" % n.first()
+					items.append(["Invite %s over (%s)" % [n.pname, _rel_word(get_rel(selected, n))], selected.enqueue.bind(a)])
+			continue
 		items.append([it["label"], selected.enqueue.bind(selected.act_use(o, it))])
-	ui.show_menu(o.def["name"], items, mpos)
+	var title: String = o.def["name"]
+	if o.label != "":
+		title = "In memory of %s" % o.label
+	ui.show_menu(title, items, mpos)
+
+
+func _rel_word(r: float) -> String:
+	if r >= 70.0:
+		return "close"
+	if r >= 35.0:
+		return "friend"
+	if r >= 10.0:
+		return "friendly"
+	if r > -10.0:
+		return "acquaintance"
+	return "on bad terms"
+
+
+func _wave_in(n: Person) -> void:
+	if rng.randf() < 0.75 + get_rel(selected, n) / 150.0:
+		n.come_in()
+		msg("%s is coming over." % n.first())
+	else:
+		msg("%s is in a hurry today." % n.first())
 
 
 func _ghost_anchor(mpos: Vector2) -> Vector2i:
@@ -430,7 +825,7 @@ func _placeable(a: Vector2i) -> bool:
 	if not world.can_place(buy_kind, a.x, a.y, buy_rot):
 		return false
 	var d := world.kind_dims(buy_kind, buy_rot)
-	for p in people:
+	for p in everyone():
 		if not p.away and Rect2i(a, d).has_point(p.tile):
 			return false
 	return money >= Defs.OBJECTS[buy_kind]["price"]
@@ -443,7 +838,7 @@ func _click_buy(mpos: Vector2) -> void:
 			var v := int(o.def["price"] * 0.7)
 			remove_object(o)
 			money += v
-			msg("Sold %s for $%d." % [o.def["name"], v])
+			msg("Sold %s for $%d." % [o.def["name"], v], "coin")
 		return
 	if buy_kind == "":
 		return
@@ -452,6 +847,9 @@ func _click_buy(mpos: Vector2) -> void:
 		world.add_object(buy_kind, a.x, a.y, buy_rot)
 		money -= Defs.OBJECTS[buy_kind]["price"]
 		world.update_room_scores()
+		sfx.play("place")
+	else:
+		sfx.play("error")
 
 
 func _corner(mpos: Vector2) -> Vector2i:
@@ -485,6 +883,9 @@ func _click_build(mpos: Vector2) -> void:
 				world.walls[k] = 2 if tool == "door" else 3
 				money -= price
 				_walls_changed()
+				sfx.play("place")
+			else:
+				sfx.play("error")
 		_:
 			if tool.begins_with("floor"):
 				_paint(mpos)
@@ -511,6 +912,7 @@ func _release(mpos: Vector2) -> void:
 			money -= Defs.WALL_PRICE
 	if not keys.is_empty():
 		_walls_changed()
+		sfx.play("place")
 
 
 func _walls_changed() -> void:
@@ -574,20 +976,27 @@ func _sample() -> void:
 
 
 func _report() -> void:
-	print("=== %d days simulated, money $%d ===" % [_test_days, money])
+	print("=== %d days simulated, money $%d, household %d, over=%s ===" % [day, money, people.size(), over])
 	for p in people:
 		var line := "%-10s" % p.first()
 		for n in Defs.NEEDS:
-			var s: Array = _samples[p.first() + "." + n]
+			var s: Array = _samples.get(p.first() + "." + n, [0.0, 1, 0.0])
 			line += " %s avg %2d min %2d |" % [n.substr(0, 4), int(s[0] / s[1]), int(s[2])]
 		print(line)
-		print("   job: ", p.job, "  skills: ", p.skills)
+		print("   %s age %.1f  job: %s  skills: %s" % [p.stage(), p.age, p.job, p.skills])
 		print("   actions: ", p.stats)
+	for n in neighbours:
+		print("   neighbour %s: %s" % [n.pname, n.stats])
 	print("   relationships: ", rel)
+	for n in neighbours:
+		print("   neighbour hh%d %s: %s age %.1f job %s" % [n.household, n.pname, n.stage(), n.age, n.job != null])
+	print("   memorials: ", world.objects.filter(func(o): return o.kind == "grave").map(func(o): return o.label))
+	if OS.has_environment("TP_SAVE"):
+		save_game(true)
+		print("   saved to ", save_path)
 
 
 func _selftest() -> void:
-	var c := get_viewport().get_visible_rect().size / 2.0
 	var lawn := cam.cam.unproject_position(Vector3(3.5, 0, 3.5))
 	set_mode("buy")
 	for k in Defs.OBJECTS:
@@ -618,12 +1027,13 @@ func _selftest() -> void:
 	_click_build(cam.cam.unproject_position(Vector3(2, 0, 2)))
 	_release(cam.cam.unproject_position(Vector3(6, 0, 2)))
 	print("selftest erased: ", not world.walls.has(Vector3i(3, 2, 0)))
-	set_mode("live")
+	set_mode(OS.get_environment("TP_MODE") if OS.has_environment("TP_MODE") else "live")
 	for o in world.objects:
-		if o.kind == "fridge":
+		if o.kind == "phone":
 			_click_live(cam.cam.unproject_position(o.position + Vector3(0, 0.5, 0)))
-			print("selftest menu items: ", ui.menu.item_count)
-			ui.menu_calls[1].call()
+			print("selftest phone menu items: ", ui.menu.item_count)
+			if ui.menu_calls.size() > 1:
+				ui.menu_calls[1].call()
 	ui.menu.hide()
 	for p in people:
 		if p != selected:
@@ -631,5 +1041,9 @@ func _selftest() -> void:
 			print("selftest social menu items: ", ui.menu.item_count)
 			ui.menu_calls[1].call()
 			break
+	ui.menu.hide()
 	print("selftest queue: ", selected.queue.map(func(a): return a.label), " cur: ", selected.activity())
-	cancel_action(selected, 1)
+	save_game()
+	print("selftest save exists: ", FileAccess.file_exists(save_path))
+	ui.toggle_help()
+	ui.toggle_help()

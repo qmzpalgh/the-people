@@ -1,6 +1,28 @@
 class_name UI
 extends CanvasLayer
-## Heads-up display, built entirely in code.
+## Heads-up display, built in code. Quiet by default: the clock, the household and one
+## line about the selected person. Needs, details, catalogues and controls open on demand.
+
+const INK := Color("23303a")
+const PAPER := Color(0.97, 0.975, 0.965, 0.95)
+const GOLD := Color("f2b01e")
+const GOOD := Color("3fa66b")
+const WARN := Color("e0533d")
+const MUTED := Color("7c8a93")
+
+const ALERTS := {
+	"hunger": "Hungry", "energy": "Tired", "hygiene": "Needs a wash", "bladder": "Needs the toilet",
+	"fun": "Bored", "social": "Lonely", "comfort": "Uncomfortable", "room": "Dislikes this room",
+}
+const SPEED_TEXT := ["II", ">", ">>", ">>>"]
+const SPEED_TIP := ["Pause (Space)", "Play (1)", "Fast (2)", "Faster (3)"]
+const CONTROLS := [
+	["Click an object or person", "Choose what to do"], ["Right-click the ground", "Walk there"],
+	["Right-click or Esc", "Put the current tool away"], ["W A S D", "Move the camera"],
+	["Q / E, middle-drag", "Turn the camera"], ["Mouse wheel", "Zoom"], ["Tab", "Next household member"],
+	["Space, 1 2 3", "Pause and speed"], ["R", "Rotate furniture"], ["F", "Walls up or down"],
+	["F5 / F9", "Save / load"], ["M", "Sound on or off"], ["H", "Show or hide this list"],
+]
 
 var game
 var root: Control
@@ -8,140 +30,242 @@ var clock_l: Label
 var money_l: Label
 var speed_btns: Array = []
 var mode_btns := {}
-var people_box: HBoxContainer
+var chips_box: HBoxContainer
 var name_l: Label
-var job_l: Label
 var act_l: Label
-var queue_box: HBoxContainer
-var bars := {}
 var mood_bar: ProgressBar
+var alerts: HFlowContainer
+var queue_box: HFlowContainer
+var needs_box: GridContainer
+var bars := {}
 var info_l: Label
+var needs_btn: Button
+var info_btn: Button
+var needs_open := false
+var info_open := false
 var side: PanelContainer
-var side_box: VBoxContainer
-var msg_box: VBoxContainer
+var side_title: Label
+var cat_box: HFlowContainer
+var list_box: VBoxContainer
+var hint_l: Label
+var item_btns := {}
+var tool_btns := {}
+var cat := "Seating"
+var build_tab := "Walls"
+var toasts: VBoxContainer
 var menu: PopupMenu
 var menu_calls: Array = []
-var will_btn: CheckButton
-var _queue_sig := ""
-var _people_sig := ""
+var opt_menu: PopupMenu
+var help_panel: PanelContainer
+var over_panel: PanelContainer
+var _sig := {}
 
 
 func _ready() -> void:
 	root = Control.new()
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.theme = _make_theme()
 	add_child(root)
 
-	# Top-left: clock, speed, money.
-	var top := _panel(Control.PRESET_TOP_LEFT, Vector2(10, 10))
-	var th := HBoxContainer.new()
-	th.add_theme_constant_override("separation", 10)
-	top.add_child(th)
-	clock_l = _label(th, "", 20)
-	clock_l.custom_minimum_size.x = 170
-	var names := ["Pause", "Play", "Fast", "Faster"]
+	# Clock, speed, money.
+	var top := PanelContainer.new()
+	_place(top, Control.PRESET_TOP_LEFT, 12, 12)
+	var th := _hbox(top, 10)
+	clock_l = _label(th, "", 15)
+	clock_l.custom_minimum_size.x = 132
+	var sp := _hbox(th, 2)
 	for i in 4:
-		var b := _btn(th, names[i], game.set_speed.bind(i))
-		b.toggle_mode = true
+		var b := _seg(sp, SPEED_TEXT[i], game.set_speed.bind(i))
+		b.tooltip_text = SPEED_TIP[i]
+		b.custom_minimum_size.x = 34
 		speed_btns.append(b)
-	money_l = _label(th, "", 20)
-	money_l.custom_minimum_size.x = 100
+	money_l = _label(th, "", 15)
+	money_l.custom_minimum_size.x = 64
+	money_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 
-	# Top-right: modes and options.
-	var tr := _panel(Control.PRESET_TOP_RIGHT, Vector2(-10, 10))
-	tr.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	var trh := HBoxContainer.new()
-	trh.add_theme_constant_override("separation", 8)
-	tr.add_child(trh)
+	# Modes and the options menu.
+	var tr := PanelContainer.new()
+	_place(tr, Control.PRESET_TOP_RIGHT, -12, 12)
+	var trh := _hbox(tr, 2)
 	for m in ["live", "buy", "build"]:
-		var b := _btn(trh, m.capitalize(), game.set_mode.bind(m))
-		b.toggle_mode = true
-		mode_btns[m] = b
-	_btn(trh, "Walls (F)", game.toggle_walls)
-	will_btn = CheckButton.new()
-	will_btn.text = "Free will"
-	will_btn.button_pressed = true
-	will_btn.focus_mode = Control.FOCUS_NONE
-	will_btn.toggled.connect(func(on): game.free_will = on)
-	trh.add_child(will_btn)
+		mode_btns[m] = _seg(trh, m.capitalize(), game.set_mode.bind(m))
+	var mb := _btn(trh, "Menu", _open_options)
+	mb.add_theme_color_override("font_color", MUTED)
 
-	# Bottom-left: household and selected person.
-	var bl := _panel(Control.PRESET_BOTTOM_LEFT, Vector2(10, -10))
-	bl.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	var bv := VBoxContainer.new()
-	bv.add_theme_constant_override("separation", 6)
-	bl.add_child(bv)
-	people_box = HBoxContainer.new()
-	bv.add_child(people_box)
-	name_l = _label(bv, "", 20)
-	job_l = _label(bv, "", 14)
-	act_l = _label(bv, "", 14)
-	queue_box = HBoxContainer.new()
-	queue_box.custom_minimum_size.y = 32
-	bv.add_child(queue_box)
-	var mh := HBoxContainer.new()
-	bv.add_child(mh)
-	_label(mh, "Mood", 14).custom_minimum_size.x = 70
-	mood_bar = _bar(mh, 330)
-	var grid := GridContainer.new()
-	grid.columns = 4
-	grid.add_theme_constant_override("h_separation", 8)
-	bv.add_child(grid)
+	# Household and the selected person.
+	var bl := VBoxContainer.new()
+	bl.add_theme_constant_override("separation", 8)
+	_place(bl, Control.PRESET_BOTTOM_LEFT, 12, -12)
+	chips_box = _hbox(bl, 6)
+	var card := PanelContainer.new()
+	card.custom_minimum_size.x = 300
+	bl.add_child(card)
+	var cv := VBoxContainer.new()
+	cv.add_theme_constant_override("separation", 6)
+	card.add_child(cv)
+	var head := _hbox(cv, 2)
+	name_l = _label(head, "", 17)
+	name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	needs_btn = _seg(head, "Needs", func(): needs_open = not needs_open)
+	info_btn = _seg(head, "About", func(): info_open = not info_open)
+	act_l = _label(cv, "", 13)
+	act_l.add_theme_color_override("font_color", MUTED)
+	mood_bar = _bar(cv, 0, 6)
+	mood_bar.tooltip_text = "Mood"
+	alerts = HFlowContainer.new()
+	cv.add_child(alerts)
+	queue_box = HFlowContainer.new()
+	cv.add_child(queue_box)
+	needs_box = GridContainer.new()
+	needs_box.columns = 4
+	needs_box.add_theme_constant_override("h_separation", 8)
+	needs_box.add_theme_constant_override("v_separation", 5)
+	cv.add_child(needs_box)
 	for n in Defs.NEEDS:
-		_label(grid, Defs.NEED_NAMES[n], 14).custom_minimum_size.x = 62
-		bars[n] = _bar(grid, 130)
-	info_l = _label(bv, "", 13)
+		var l := _label(needs_box, Defs.NEED_NAMES[n], 13)
+		l.custom_minimum_size.x = 58
+		bars[n] = _bar(needs_box, 84, 8)
+	info_l = _label(cv, "", 13)
 
-	# Right: catalog / build tools.
-	side = _panel(Control.PRESET_CENTER_RIGHT, Vector2(-10, 0))
-	side.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	side.grow_vertical = Control.GROW_DIRECTION_BOTH
+	# Catalogue and build tools.
+	side = PanelContainer.new()
+	_place(side, Control.PRESET_CENTER_RIGHT, -12, 0)
+	var sv := VBoxContainer.new()
+	sv.add_theme_constant_override("separation", 8)
+	sv.custom_minimum_size.x = 236
+	side.add_child(sv)
+	side_title = _label(sv, "", 17)
+	cat_box = HFlowContainer.new()
+	sv.add_child(cat_box)
 	var sc := ScrollContainer.new()
-	sc.custom_minimum_size = Vector2(250, 620)
+	sc.custom_minimum_size.y = 300
 	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	side.add_child(sc)
-	side_box = VBoxContainer.new()
-	side_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	sc.add_child(side_box)
+	sv.add_child(sc)
+	list_box = VBoxContainer.new()
+	list_box.add_theme_constant_override("separation", 2)
+	list_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sc.add_child(list_box)
+	hint_l = _label(sv, "", 13)
+	hint_l.add_theme_color_override("font_color", MUTED)
+	hint_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
-	# Messages.
-	msg_box = VBoxContainer.new()
-	msg_box.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	msg_box.position = Vector2(-260, 64)
-	msg_box.custom_minimum_size.x = 520
-	msg_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(msg_box)
+	toasts = VBoxContainer.new()
+	toasts.add_theme_constant_override("separation", 6)
+	toasts.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_place(toasts, Control.PRESET_CENTER_TOP, 0, 64)
 
-	# Help.
-	var help := _label(root, "WASD pan · Q/E rotate · wheel zoom · middle-drag orbit · click object/person: interact\nright-click: go here / cancel tool · Tab: next person · Space: pause · 1-3: speed · R: rotate · F: walls", 12)
-	help.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	help.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	help.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	help.offset_left = -10
-	help.offset_right = -10
-	help.offset_top = -8
-	help.offset_bottom = -8
-	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	help.add_theme_color_override("font_outline_color", Color.BLACK)
-	help.add_theme_constant_override("outline_size", 4)
+	# Controls overlay.
+	help_panel = PanelContainer.new()
+	_place(help_panel, Control.PRESET_CENTER, 0, 0)
+	help_panel.visible = false
+	var hv := VBoxContainer.new()
+	hv.add_theme_constant_override("separation", 10)
+	help_panel.add_child(hv)
+	_label(hv, "Controls", 17)
+	var hg := GridContainer.new()
+	hg.columns = 2
+	hg.add_theme_constant_override("h_separation", 24)
+	hg.add_theme_constant_override("v_separation", 6)
+	hv.add_child(hg)
+	for row in CONTROLS:
+		_label(hg, row[0], 14)
+		_label(hg, row[1], 14).add_theme_color_override("font_color", MUTED)
+	_btn(hv, "Close", toggle_help).size_flags_horizontal = Control.SIZE_SHRINK_END
 
 	menu = PopupMenu.new()
-	menu.id_pressed.connect(func(id): if id >= 0 and id < menu_calls.size(): menu_calls[id].call())
+	menu.theme = root.theme
+	menu.id_pressed.connect(func(id):
+		if id >= 0 and id < menu_calls.size():
+			game.sfx.play("click")
+			menu_calls[id].call())
 	add_child(menu)
+	opt_menu = PopupMenu.new()
+	opt_menu.theme = root.theme
+	opt_menu.id_pressed.connect(_on_option)
+	add_child(opt_menu)
 	build_side()
 
 
-func _panel(preset: int, offset: Vector2) -> PanelContainer:
-	var p := PanelContainer.new()
-	p.set_anchors_preset(preset)
-	p.position = offset
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.1, 0.12, 0.16, 0.86)
-	sb.set_corner_radius_all(8)
-	sb.set_content_margin_all(10)
-	p.add_theme_stylebox_override("panel", sb)
-	root.add_child(p)
-	return p
+# ---------------------------------------------------------------- building blocks
+
+func _sb(c: Color, radius := 8, mh := 10, mv := 5) -> StyleBoxFlat:
+	var s := StyleBoxFlat.new()
+	s.bg_color = c
+	s.set_corner_radius_all(radius)
+	s.content_margin_left = mh
+	s.content_margin_right = mh
+	s.content_margin_top = mv
+	s.content_margin_bottom = mv
+	return s
+
+
+func _make_theme() -> Theme:
+	var t := Theme.new()
+	var f := SystemFont.new()
+	f.font_names = PackedStringArray(["Nunito", "Quicksand", "Cantarell", "Noto Sans", "sans-serif"])
+	t.default_font = f
+	t.default_font_size = 14
+	t.set_color("font_color", "Label", INK)
+	var clear := _sb(Color(0, 0, 0, 0))
+	t.set_stylebox("normal", "Button", clear)
+	t.set_stylebox("disabled", "Button", clear)
+	t.set_stylebox("hover", "Button", _sb(Color(INK, 0.08)))
+	t.set_stylebox("pressed", "Button", _sb(Color(INK, 0.14)))
+	t.set_stylebox("focus", "Button", StyleBoxEmpty.new())
+	for c in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color", "font_focus_color"]:
+		t.set_color(c, "Button", INK)
+	t.set_color("font_disabled_color", "Button", Color(MUTED, 0.6))
+	var panel := _sb(PAPER, 14, 14, 12)
+	panel.shadow_color = Color(0, 0, 0, 0.2)
+	panel.shadow_size = 10
+	panel.shadow_offset = Vector2(0, 3)
+	t.set_stylebox("panel", "PanelContainer", panel)
+	var pop := _sb(PAPER, 10, 6, 6)
+	pop.shadow_color = Color(0, 0, 0, 0.2)
+	pop.shadow_size = 10
+	t.set_stylebox("panel", "PopupMenu", pop)
+	t.set_stylebox("hover", "PopupMenu", _sb(Color(GOLD, 0.35), 6))
+	t.set_color("font_color", "PopupMenu", INK)
+	t.set_color("font_hover_color", "PopupMenu", INK)
+	t.set_color("font_disabled_color", "PopupMenu", MUTED)
+	t.set_constant("v_separation", "PopupMenu", 8)
+	t.set_constant("item_start_padding", "PopupMenu", 10)
+	t.set_constant("item_end_padding", "PopupMenu", 10)
+	t.set_stylebox("panel", "TooltipPanel", _sb(INK, 6, 8, 4))
+	t.set_color("font_color", "TooltipLabel", Color.WHITE)
+	return t
+
+
+func _place(c: Control, preset: int, dx: float, dy: float) -> void:
+	root.add_child(c)
+	c.set_anchors_preset(preset)
+	c.grow_horizontal = Control.GROW_DIRECTION_END
+	c.grow_vertical = Control.GROW_DIRECTION_END
+	match preset:
+		Control.PRESET_TOP_RIGHT:
+			c.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+		Control.PRESET_BOTTOM_LEFT:
+			c.grow_vertical = Control.GROW_DIRECTION_BEGIN
+		Control.PRESET_CENTER_RIGHT:
+			c.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+			c.grow_vertical = Control.GROW_DIRECTION_BOTH
+		Control.PRESET_CENTER_TOP:
+			c.grow_horizontal = Control.GROW_DIRECTION_BOTH
+		Control.PRESET_CENTER:
+			c.grow_horizontal = Control.GROW_DIRECTION_BOTH
+			c.grow_vertical = Control.GROW_DIRECTION_BOTH
+	c.offset_left = dx
+	c.offset_right = dx
+	c.offset_top = dy
+	c.offset_bottom = dy
+
+
+func _hbox(parent: Node, sep: int) -> HBoxContainer:
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", sep)
+	parent.add_child(h)
+	return h
 
 
 func _label(parent: Node, text: String, size: int) -> Label:
@@ -157,51 +281,87 @@ func _btn(parent: Node, text: String, cb: Callable) -> Button:
 	var b := Button.new()
 	b.text = text
 	b.focus_mode = Control.FOCUS_NONE
-	b.pressed.connect(cb)
+	b.pressed.connect(func():
+		game.sfx.play("click")
+		cb.call())
 	parent.add_child(b)
 	return b
 
 
-func _bar(parent: Node, width: float) -> ProgressBar:
+## A toggle that fills with ink when it is the active choice.
+func _seg(parent: Node, text: String, cb: Callable) -> Button:
+	var b := _btn(parent, text, cb)
+	b.toggle_mode = true
+	b.add_theme_stylebox_override("pressed", _sb(INK))
+	b.add_theme_stylebox_override("hover_pressed", _sb(INK))
+	b.add_theme_color_override("font_pressed_color", Color.WHITE)
+	b.add_theme_color_override("font_hover_pressed_color", Color.WHITE)
+	return b
+
+
+func _bar(parent: Node, width: float, height: float) -> ProgressBar:
 	var b := ProgressBar.new()
-	b.custom_minimum_size = Vector2(width, 16)
+	b.custom_minimum_size = Vector2(width, height)
 	b.show_percentage = false
 	b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	var bg := StyleBoxFlat.new()
-	bg.bg_color = Color(0, 0, 0, 0.5)
-	bg.set_corner_radius_all(4)
-	b.add_theme_stylebox_override("background", bg)
-	var fg := StyleBoxFlat.new()
-	fg.bg_color = Color.WHITE
-	fg.set_corner_radius_all(4)
-	b.add_theme_stylebox_override("fill", fg)
+	b.add_theme_stylebox_override("background", _sb(Color(INK, 0.1), 4, 0, 0))
+	b.add_theme_stylebox_override("fill", _sb(GOOD, 4, 0, 0))
 	parent.add_child(b)
 	return b
 
 
 func _set_bar(b: ProgressBar, v: float) -> void:
 	b.value = v
-	var c := Color(0.9, 0.25, 0.2).lerp(Color(0.95, 0.8, 0.2), clampf(v / 50.0, 0, 1))
-	if v > 50.0:
-		c = Color(0.95, 0.8, 0.2).lerp(Color(0.3, 0.8, 0.35), (v - 50.0) / 50.0)
+	var c := WARN.lerp(GOLD, clampf(v / 45.0, 0.0, 1.0))
+	if v > 45.0:
+		c = GOLD.lerp(GOOD, clampf((v - 45.0) / 30.0, 0.0, 1.0))
 	b.get_theme_stylebox("fill").bg_color = c
 
 
+func _chip(parent: Node, text: String, c: Color) -> void:
+	var p := PanelContainer.new()
+	p.add_theme_stylebox_override("panel", _sb(Color(c, 0.16), 9, 8, 2))
+	var l := _label(p, text, 12)
+	l.add_theme_color_override("font_color", c.darkened(0.15))
+	parent.add_child(p)
+
+
+func _clear(n: Node) -> void:
+	for c in n.get_children():
+		n.remove_child(c)
+		c.queue_free()
+
+
+func _changed(key: String, value: String) -> bool:
+	if _sig.get(key, "") == value:
+		return false
+	_sig[key] = value
+	return true
+
+
+# ---------------------------------------------------------------- messages and menus
+
 func push_msg(text: String) -> void:
-	if msg_box == null:
+	if toasts == null:
 		return
-	var l := Label.new()
-	l.text = text
+	var p := PanelContainer.new()
+	p.add_theme_stylebox_override("panel", _sb(PAPER, 10, 12, 6))
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	var l := _label(p, text, 13)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.add_theme_font_size_override("font_size", 16)
-	l.add_theme_color_override("font_outline_color", Color.BLACK)
-	l.add_theme_constant_override("outline_size", 6)
-	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	msg_box.add_child(l)
-	if msg_box.get_child_count() > 5:
-		msg_box.get_child(0).queue_free()
-	get_tree().create_timer(7.0).timeout.connect(func(): if is_instance_valid(l): l.queue_free())
+	if text.length() > 60:
+		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		l.custom_minimum_size.x = 400
+	toasts.add_child(p)
+	while toasts.get_child_count() > 3:
+		var old := toasts.get_child(0)
+		toasts.remove_child(old)
+		old.queue_free()
+	var tw := p.create_tween()
+	tw.tween_interval(6.0)
+	tw.tween_property(p, "modulate:a", 0.0, 0.6)
+	tw.tween_callback(p.queue_free)
 
 
 func show_menu(title: String, items: Array, pos: Vector2) -> void:
@@ -210,7 +370,7 @@ func show_menu(title: String, items: Array, pos: Vector2) -> void:
 	menu.add_item(title, 999)
 	menu.set_item_disabled(0, true)
 	if items.is_empty():
-		menu.add_item("(nothing to do here)", 998)
+		menu.add_item("Nothing to do here", 998)
 		menu.set_item_disabled(1, true)
 	for i in items.size():
 		menu.add_item(items[i][0], i)
@@ -220,99 +380,306 @@ func show_menu(title: String, items: Array, pos: Vector2) -> void:
 	menu.popup()
 
 
-func build_side() -> void:
-	if side_box == null:
+func _open_options() -> void:
+	opt_menu.clear()
+	opt_menu.add_check_item("Walls up", 0)
+	opt_menu.set_item_checked(0, game.world.walls_up)
+	opt_menu.add_check_item("Free will", 1)
+	opt_menu.set_item_checked(1, game.free_will)
+	opt_menu.add_check_item("Sound", 2)
+	opt_menu.set_item_checked(2, not game.sfx.muted)
+	opt_menu.add_separator()
+	opt_menu.add_item("Save", 3)
+	opt_menu.add_item("Load last save", 4)
+	opt_menu.add_item("Start a new household", 5)
+	opt_menu.add_separator()
+	opt_menu.add_item("Controls", 6)
+	opt_menu.reset_size()
+	var vp := root.get_viewport_rect().size
+	opt_menu.position = Vector2i(int(vp.x) - opt_menu.size.x - 12, 60)
+	opt_menu.popup()
+
+
+func _on_option(id: int) -> void:
+	game.sfx.play("click")
+	match id:
+		0: game.toggle_walls()
+		1: game.free_will = not game.free_will
+		2: game.sfx.set_muted(not game.sfx.muted)
+		3: game.save_game()
+		4: game.load_game()
+		5: game.new_game()
+		6: toggle_help()
+
+
+func toggle_help() -> void:
+	help_panel.visible = not help_panel.visible
+
+
+func show_game_over() -> void:
+	if over_panel != null:
 		return
-	for c in side_box.get_children():
-		c.queue_free()
+	over_panel = PanelContainer.new()
+	_place(over_panel, Control.PRESET_CENTER, 0, 0)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 10)
+	over_panel.add_child(v)
+	_label(v, "The %s household has come to an end." % game.family, 20)
+	_label(v, "Their story lasted %d days. The house stands empty now." % (game.day + 1), 14).add_theme_color_override("font_color", MUTED)
+	var h := _hbox(v, 6)
+	var nb := _seg(h, "Start a new household", game.new_game)
+	nb.button_pressed = true
+	_btn(h, "Load last save", game.load_game)
+
+
+func debug_open(what: String) -> void:
+	needs_open = what.contains("needs")
+	info_open = what.contains("info")
+	if what.contains("help"):
+		toggle_help()
+	if what.contains("floors"):
+		build_tab = "Floors"
+		build_side()
+	if what.contains("options"):
+		_open_options.call_deferred()
+
+
+# ---------------------------------------------------------------- side panel
+
+func build_side() -> void:
+	if side == null:
+		return
+	_clear(cat_box)
+	_clear(list_box)
+	item_btns.clear()
+	tool_btns.clear()
 	side.visible = game.mode != "live"
 	if game.mode == "buy":
-		_label(side_box, "Buy mode", 18)
-		var sb := _btn(side_box, "Sell tool (70% refund)", func(): game.set_buy(""); game.sell = true)
-		sb.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		for cat in Defs.CATS:
-			_label(side_box, cat, 14).add_theme_color_override("font_color", Color(0.7, 0.85, 1.0))
+		side_title.text = "Furnish"
+		for c in Defs.CATS:
+			var b := _seg(cat_box, c, _pick_cat.bind(c))
+			b.button_pressed = c == cat and not game.sell
+			b.add_theme_font_size_override("font_size", 13)
+		var sb := _seg(cat_box, "Sell", _pick_sell)
+		sb.button_pressed = game.sell
+		sb.add_theme_font_size_override("font_size", 13)
+		sb.add_theme_color_override("font_color", WARN)
+		if not game.sell:
 			for k in Defs.OBJECTS:
 				var d: Dictionary = Defs.OBJECTS[k]
 				if d["cat"] == cat:
-					var b := _btn(side_box, "%s   $%d" % [d["name"], d["price"]], game.set_buy.bind(k))
-					b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+					item_btns[k] = _row(d["name"], "$%d" % d["price"], game.set_buy.bind(k))
 	elif game.mode == "build":
-		_label(side_box, "Build mode", 18)
-		var tools := [["wall", "Wall (drag)   $%d" % Defs.WALL_PRICE], ["door", "Door (click wall)   $%d" % Defs.DOOR_PRICE],
-			["window", "Window (click wall)   $%d" % Defs.WINDOW_PRICE], ["erase", "Remove wall (drag)"]]
-		for t in tools:
-			_btn(side_box, t[1], func(): game.tool = t[0]).alignment = HORIZONTAL_ALIGNMENT_LEFT
-		_label(side_box, "Floors (click / drag)", 14).add_theme_color_override("font_color", Color(0.7, 0.85, 1.0))
-		for i in Defs.FLOORS.size():
-			var f: Dictionary = Defs.FLOORS[i]
-			var text := "Remove floor" if i == 0 else "%s   $%d" % [f["name"], f["price"]]
-			_btn(side_box, text, func(): game.tool = "floor:%d" % i).alignment = HORIZONTAL_ALIGNMENT_LEFT
+		side_title.text = "Build"
+		for c in ["Walls", "Floors"]:
+			var b := _seg(cat_box, c, _pick_tab.bind(c))
+			b.button_pressed = c == build_tab
+		if build_tab == "Walls":
+			tool_btns["wall"] = _row("Wall", "$%d" % Defs.WALL_PRICE, _pick_tool.bind("wall"))
+			tool_btns["door"] = _row("Door", "$%d" % Defs.DOOR_PRICE, _pick_tool.bind("door"))
+			tool_btns["window"] = _row("Window", "$%d" % Defs.WINDOW_PRICE, _pick_tool.bind("window"))
+			tool_btns["erase"] = _row("Remove wall", "", _pick_tool.bind("erase"))
+		else:
+			for i in range(1, Defs.FLOORS.size()):
+				var f: Dictionary = Defs.FLOORS[i]
+				tool_btns["floor:%d" % i] = _row(f["name"], "$%d" % f["price"], _pick_tool.bind("floor:%d" % i), f["tint"])
+			tool_btns["floor:0"] = _row("Remove floor", "", _pick_tool.bind("floor:0"))
 
+
+func _row(text: String, right: String, cb: Callable, swatch = null) -> Button:
+	var b := _seg(list_box, text, cb)
+	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	if swatch != null:
+		var sw := ColorRect.new()
+		sw.color = swatch
+		sw.custom_minimum_size = Vector2(14, 14)
+		sw.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		b.add_child(sw)
+		sw.set_anchors_preset(Control.PRESET_CENTER_LEFT)
+		sw.offset_left = 10
+		sw.offset_right = 24
+		sw.offset_top = -7
+		sw.offset_bottom = 7
+		b.text = "      " + text
+	if right != "":
+		var l := _label(b, right, 13)
+		l.add_theme_color_override("font_color", MUTED)
+		l.set_anchors_preset(Control.PRESET_CENTER_RIGHT)
+		l.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+		l.grow_vertical = Control.GROW_DIRECTION_BOTH
+		l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		l.offset_left = -10
+		l.offset_right = -10
+		l.offset_top = -10
+		l.offset_bottom = 10
+	return b
+
+
+func _pick_cat(c: String) -> void:
+	cat = c
+	game.set_buy("")
+	build_side()
+
+
+func _pick_sell() -> void:
+	game.set_buy("")
+	game.sell = true
+	build_side()
+
+
+func _pick_tab(c: String) -> void:
+	build_tab = c
+	game.tool = ""
+	build_side()
+
+
+func _pick_tool(t: String) -> void:
+	game.tool = "" if game.tool == t else t
+
+
+func _hint() -> String:
+	if game.mode == "buy":
+		if game.sell:
+			return "Click an object to sell it for 70% of its price."
+		if game.buy_kind == "":
+			return "Pick something to place."
+		if game.money < Defs.OBJECTS[game.buy_kind]["price"]:
+			return "The household can't afford this yet."
+		return "Click to place it. R rotates. Right-click puts it back."
+	match game.tool:
+		"": return "Pick a tool."
+		"wall": return "Drag along the grid to raise walls."
+		"erase": return "Drag along a wall to take it down."
+		"door": return "Click a wall to put a door in it."
+		"window": return "Click a wall to put a window in it."
+	return "Click or drag over tiles to lay this floor."
+
+
+# ---------------------------------------------------------------- per-frame refresh
 
 func refresh() -> void:
 	var h: float = game.hour()
-	clock_l.text = "Day %d  %s  %02d:%02d" % [game.day + 1, Defs.DAYS[game.day % 7], int(h), int(fmod(h, 1.0) * 60.0)]
+	clock_l.text = "%s %02d:%02d" % [Defs.DAYS[game.day % 7], int(h), int(fmod(h, 1.0) * 60.0)]
+	clock_l.tooltip_text = "Day %d" % (game.day + 1)
 	money_l.text = "$%d" % game.money
-	money_l.add_theme_color_override("font_color", Color(1, 0.4, 0.4) if game.money < 0 else Color(0.6, 1, 0.6))
+	money_l.add_theme_color_override("font_color", WARN if game.money < 0 else INK)
 	for i in 4:
 		speed_btns[i].set_pressed_no_signal(game.speed == i)
 	for m in mode_btns:
 		mode_btns[m].set_pressed_no_signal(game.mode == m)
+	if side.visible:
+		for k in item_btns:
+			item_btns[k].set_pressed_no_signal(game.buy_kind == k)
+			item_btns[k].disabled = Defs.OBJECTS[k]["price"] > game.money
+		for k in tool_btns:
+			tool_btns[k].set_pressed_no_signal(game.tool == k)
+		hint_l.text = _hint()
+	_refresh_chips()
+	_refresh_card()
 
-	var psig := ""
-	for p in game.people:
-		psig += p.pname + str(p == game.selected) + str(p.away)
-	if psig != _people_sig:
-		_people_sig = psig
-		for c in people_box.get_children():
-			c.queue_free()
-		for p in game.people:
-			var b := _btn(people_box, p.first() + (" (work)" if p.away else ""), game.select.bind(p))
-			b.toggle_mode = true
-			b.button_pressed = p == game.selected
-			var sw := StyleBoxFlat.new()
-			sw.bg_color = p.shirt
-			sw.set_corner_radius_all(4)
-			sw.set_content_margin_all(6)
-			b.add_theme_stylebox_override("pressed", sw)
 
+func _refresh_chips() -> void:
+	var guests: Array = game.neighbours.filter(func(n): return n.vstate in ["waiting", "guest"])
+	var sig := ""
+	for p in game.people + guests:
+		sig += "%d%s%s%s|" % [p.pid, p == game.selected, p.away, p.stage()]
+	if not _changed("chips", sig):
+		return
+	_clear(chips_box)
+	for p in game.people + guests:
+		var b := _btn(chips_box, p.first().substr(0, 1), game.select.bind(p) if p.resident else func(): pass)
+		var d := 30 if p.stage() == "child" else 38
+		b.custom_minimum_size = Vector2(d, d)
+		b.size_flags_vertical = Control.SIZE_SHRINK_END
+		b.tooltip_text = p.pname if p.resident else "%s (visiting)" % p.pname
+		var s := _sb(p.shirt if p.resident else PAPER, d / 2, 0, 0)
+		if p == game.selected:
+			s.set_border_width_all(3)
+			s.border_color = GOLD
+		elif not p.resident:
+			s.set_border_width_all(2)
+			s.border_color = p.shirt
+		for st in ["normal", "hover", "pressed"]:
+			b.add_theme_stylebox_override(st, s)
+		for c in ["font_color", "font_hover_color", "font_pressed_color"]:
+			b.add_theme_color_override(c, Color.WHITE if p.resident else INK)
+		b.modulate.a = 0.45 if p.away else 1.0
+
+
+func _refresh_card() -> void:
 	var s: Person = game.selected
-	if s == null:
+	if s == null or not is_instance_valid(s):
 		return
 	name_l.text = s.pname
-	if s.job != null:
-		var c: Dictionary = Defs.CAREERS[s.job.career]
-		job_l.text = "%s · %s · $%d/day · %d:00-%d:00 Mon-Fri · performance %d%%" % [c["name"], c["titles"][s.job.level],
-			c["pay"][s.job.level], int(c["start"]), int(c["start"] + c["hours"]), int(clampf(s.job.perf, 0, 100))]
-	else:
-		job_l.text = "Unemployed (use a computer to find a job)"
-	act_l.text = "Doing: " + s.activity()
-	var labels := []
-	if s.cur != null and not s.away:
-		labels.append(s.cur.label)
-	for a in s.queue:
-		labels.append(a.label)
-	var qsig := s.pname + "|".join(labels)
-	if qsig != _queue_sig:
-		_queue_sig = qsig
-		for c in queue_box.get_children():
-			c.queue_free()
-		for i in labels.size():
-			var b := _btn(queue_box, labels[i] + "  x", game.cancel_action.bind(s, i))
-			b.add_theme_font_size_override("font_size", 12)
-			b.tooltip_text = "Cancel"
+	act_l.text = s.activity()
 	_set_bar(mood_bar, s.mood())
-	for n in Defs.NEEDS:
-		_set_bar(bars[n], s.needs[n])
-	var sk := []
-	for k in Defs.SKILLS:
-		sk.append("%s %d" % [k.capitalize(), int(s.skills[k])])
-	var rl := []
-	for p in game.people:
-		if p != s:
-			rl.append("%s %+d" % [p.first(), int(game.get_rel(s, p))])
-	var tr := []
-	for t in Defs.TRAITS:
-		tr.append("%s %d" % [t.capitalize(), s.traits[t]])
-	info_l.text = "Skills: %s\nTraits: %s\nRelationships: %s" % [", ".join(sk), ", ".join(tr), ", ".join(rl)]
+	needs_btn.set_pressed_no_signal(needs_open)
+	info_btn.set_pressed_no_signal(info_open)
+	needs_box.visible = needs_open
+	info_l.visible = info_open
+
+	# Only the needs that want attention surface on their own.
+	var low := []
+	if not needs_open and not s.away:
+		for n in Defs.NEEDS:
+			if s.needs[n] < 30.0:
+				low.append(n)
+	alerts.visible = not low.is_empty()
+	if _changed("alerts", ",".join(low)):
+		_clear(alerts)
+		for n in low:
+			_chip(alerts, ALERTS[n], WARN)
+
+	var labels := []
+	if not s.away and (not s.queue.is_empty() or (s.cur != null and not s.cur.get("auto", false))):
+		if s.cur != null:
+			labels.append(s.cur.label)
+		for a in s.queue:
+			labels.append(a.label)
+	queue_box.visible = not labels.is_empty()
+	if _changed("queue", s.pname + "|".join(labels)):
+		_clear(queue_box)
+		for i in labels.size():
+			var b := _btn(queue_box, labels[i] + "  ×", game.cancel_action.bind(s, i))
+			b.add_theme_font_size_override("font_size", 12)
+			b.add_theme_stylebox_override("normal", _sb(Color(INK, 0.07), 9, 8, 2))
+			b.tooltip_text = "Cancel"
+
+	if needs_open:
+		for n in Defs.NEEDS:
+			_set_bar(bars[n], s.needs[n])
+	if info_open:
+		var lines := [s.stage_text()]
+		if s.job != null:
+			var c: Dictionary = Defs.CAREERS[s.job.career]
+			lines.append("%s, $%d a day, %d:00 to %d:00 on weekdays" % [c["titles"][s.job.level], c["pay"][s.job.level],
+				int(c["start"]), int(c["start"] + c["hours"])])
+			lines.append("Work performance %d%%" % int(clampf(s.job.perf, 0, 100)))
+		elif s.stage() == "child":
+			lines.append("At school 8:00 to 14:00 on weekdays")
+		elif s.stage() == "elder":
+			lines.append("Retired, $%d a day pension" % Defs.PENSION)
+		else:
+			lines.append("No job yet. A computer can find one.")
+		var sk := []
+		for k in Defs.SKILLS:
+			if s.skills[k] >= 1.0:
+				sk.append("%s %d" % [k.capitalize(), int(s.skills[k])])
+		if not sk.is_empty():
+			lines.append("Skills: " + ", ".join(sk))
+		var tr := []
+		for t in Defs.TRAITS:
+			if s.traits[t] >= 7:
+				tr.append(t.capitalize())
+			elif s.traits[t] <= 3:
+				tr.append("Not " + t)
+		if not tr.is_empty():
+			lines.append(", ".join(tr))
+		var rl := []
+		for p in game.everyone():
+			var r: float = game.get_rel(s, p)
+			if p != s and (p.resident or absf(r) >= 5.0):
+				rl.append("%s %+d" % [p.first(), int(r)])
+		if not rl.is_empty():
+			lines.append("Knows " + ", ".join(rl))
+		info_l.text = "\n".join(lines)
