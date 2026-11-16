@@ -129,7 +129,7 @@ const OBJECTS := {
 		],
 	},
 	"stove": {
-		"name": "Stove", "price": 400, "cat": "Kitchen", "size": Vector2i(1, 1), "h": 0.9,
+		"name": "Stove", "price": 400, "cat": "Kitchen", "size": Vector2i(1, 1), "h": 0.9, "cap": 2,
 		"acts": [{"id": "cook", "label": "Cook", "skill": {"cooking": 0.3}, "dur": 0.6, "hidden": true, "snd": "sizzle", "then": {"kind": "self", "id": "eat"}}],
 	},
 	"sink": {

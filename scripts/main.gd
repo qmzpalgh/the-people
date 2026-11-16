@@ -319,7 +319,9 @@ func _process(delta: float) -> void:
 		if _frames == 150 and OS.has_environment("TP_SELFTEST"):
 			_selftest()
 		if _frames == 200:
-			get_viewport().get_texture().get_image().save_png(_shot)
+			var img := get_viewport().get_texture().get_image()
+			if img != null:  # null when running without a display
+				img.save_png(_shot)
 			get_tree().quit()
 
 
@@ -1032,7 +1034,7 @@ func _report() -> void:
 			var jb := "none"
 			if p.job != null:
 				jb = "%s L%d" % [Defs.CAREERS[p.job.career]["name"], p.job.level]
-			print("      job %s  away %s cur %s queue %d  actions %s" % [jb, p.away, [p.cur.kind, p.cur.state, p.cur.label, p.cur.get("tries")] if p.cur != null else "-", p.queue.size(), p.stats])
+			print("      job %s, doing %s, actions %s" % [jb, p.activity(), p.stats])
 	print("   memorials: ", households.values().map(func(h): return h.world.objects.filter(func(o): return o.kind == "grave").map(func(o): return o.label)))
 	if OS.has_environment("TP_SAVE"):
 		save_game(true)
