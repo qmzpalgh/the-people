@@ -129,7 +129,7 @@ const OBJECTS := {
 		],
 	},
 	"stove": {
-		"name": "Stove", "price": 400, "cat": "Kitchen", "size": Vector2i(1, 1), "h": 0.9,
+		"name": "Stove", "price": 400, "cat": "Kitchen", "size": Vector2i(1, 1), "h": 0.9, "cap": 2,
 		"acts": [{"id": "cook", "label": "Cook", "skill": {"cooking": 0.3}, "dur": 0.6, "hidden": true, "snd": "sizzle", "then": {"kind": "self", "id": "eat"}}],
 	},
 	"sink": {
@@ -158,7 +158,7 @@ const OBJECTS := {
 	"bush": {"name": "Bush", "price": 40, "cat": "Garden", "size": Vector2i(1, 1), "room": 1.0, "h": 0.8},
 	"flowers": {"name": "Flower bed", "price": 25, "cat": "Garden", "size": Vector2i(1, 1), "room": 2.0, "h": 0.4},
 	"grave": {
-		"name": "Memorial", "price": 0, "cat": "", "size": Vector2i(1, 1), "room": 0.0, "h": 1.0,
+		"name": "Memorial", "price": 0, "cat": "", "size": Vector2i(1, 1), "room": 0.0, "h": 1.0, "soft": true,
 		"acts": [{"id": "mourn", "label": "Remember them", "needs": {"social": 10.0}, "dur": 0.3, "auto": false, "bubble": "..."}],
 	},
 	"puddle": {

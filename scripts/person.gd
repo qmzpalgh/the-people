@@ -12,6 +12,7 @@ var pid := 0
 var pname := ""
 var resident := true
 var household := 0  # 0 = the player's household
+var hh: Household
 var needs := {}
 var traits := {}
 var skills := {}
@@ -36,8 +37,9 @@ var stats := {}
 var rng := RandomNumberGenerator.new()
 var seed_v := 0
 
-# Neighbour visiting state: off, stroll, arriving, waiting, guest, leaving.
-var vstate := "off"
+# Where this person is: home (on their own lot), heading (walking out), stroll (on the
+# street), arriving, waiting (at the player's door), guest, leaving.
+var vstate := "home"
 var visit_t := 0.0
 var wait_t := 0.0
 var stroll_x := 0.0
@@ -221,7 +223,7 @@ func say(text: String, secs := 2.0) -> void:
 
 
 func _chirp() -> void:
-	if game.sfx == null:
+	if game.sfx == null or world != game.world:
 		return
 	voice.stream = game.sfx.get_stream("talk%d" % rng.randi_range(0, 2))
 	voice.pitch_scale = look["pitch"] * (1.5 if stage() == "child" else 1.0) * rng.randf_range(0.95, 1.05)
@@ -229,7 +231,7 @@ func _chirp() -> void:
 
 
 func _loop(n: String) -> void:
-	if n == "" or game.sfx == null:
+	if n == "" or game.sfx == null or world != game.world:
 		loop_p.stop()
 		return
 	loop_p.stream = game.sfx.get_stream(n)
@@ -267,7 +269,7 @@ func mood() -> float:
 
 
 func activity() -> String:
-	if away and resident:
+	if away and vstate == "home":
 		return "At school" if stage() == "child" else "At work"
 	if cur == null:
 		return "Idle"
@@ -302,7 +304,7 @@ func cancel_current() -> void:
 func can_socialize() -> bool:
 	if away or dead:
 		return false
-	if not resident and vstate != "waiting" and vstate != "guest":
+	if vstate in ["heading", "stroll", "arriving", "leaving"]:
 		return false
 	if cur == null:
 		return true
@@ -313,11 +315,10 @@ func can_socialize() -> bool:
 
 ## Whether two people may start a family together.
 func can_have_child_with(o: Person) -> bool:
-	return resident and o.resident and stage() == "adult" and o.stage() == "adult" \
-			and game.people.size() + game.pending.size() < Defs.MAX_HOUSEHOLD
+	return hh == o.hh and stage() == "adult" and o.stage() == "adult" \
+			and game.hh_count(hh) < (Defs.MAX_HOUSEHOLD if resident else 4)
 
 
-## Rules deciding whether an interaction is possible (and, for autonomy, sensible).
 func usable(o: SimObject, it: Dictionary, auto: bool) -> bool:
 	if not o.alive or not o.has_room(self):
 		return false
@@ -329,16 +330,16 @@ func usable(o: SimObject, it: Dictionary, auto: bool) -> bool:
 				return false
 		"can_invite":
 			var h: float = game.hour()
-			if h < 8.0 or h > 21.0 or game.available_neighbour() == null or game.visitors().size() >= 2:
+			if not resident or h < 8.0 or h > 21.0 or game.available_neighbour() == null or game.visitors().size() >= 2:
 				return false
 		"can_adopt":
-			if game.people.size() + game.pending.size() >= Defs.MAX_HOUSEHOLD:
+			if not resident or game.hh_count(hh) >= Defs.MAX_HOUSEHOLD:
 				return false
 	if it.has("req") and world.nearest_object(it["req"], tile) == null:
 		return false
-	if it.get("cost", 0) > game.money:
+	if it.get("cost", 0) > hh.money:
 		return false
-	if not resident:
+	if visiting():
 		# Guests are polite: no sleeping, bathing, spending or life decisions.
 		if it.get("sleep", false) or it.get("cost", 0) > 0 or it.has("special") or it.has("skill") or it.has("then"):
 			return false
@@ -368,11 +369,20 @@ func tick(dh: float, ds: float) -> void:
 	_age(dh)
 	if dead:
 		return
-	if not resident and not _visitor_tick(dh, ds):
+	if vstate == "stroll":
+		_stroll(ds)
 		return
 	if away:
 		_tick_away(dh)
 		return
+	if vstate == "waiting" or vstate == "guest":
+		_visit_tick(dh)
+	if cur == null and queue.is_empty():
+		# Recover a journey that something (a collapse, say) interrupted.
+		match vstate:
+			"heading": vstate = "home"
+			"arriving": cur = act_goto(world.door_tile, false, "arrive")
+			"leaving": cur = act_goto(world.exit_tile, false, "leave")
 	_decay(dh)
 	_check_critical(dh)
 	if dead:
@@ -381,7 +391,7 @@ func tick(dh: float, ds: float) -> void:
 		if not queue.is_empty():
 			cur = queue.pop_front()
 			cur.state = "new"
-		elif (resident and game.free_will) or vstate == "guest":
+		elif _free():
 			idle_t -= ds
 			if idle_t <= 0.0:
 				idle_t = rng.randf_range(2.0, 5.0)
@@ -394,9 +404,21 @@ func tick(dh: float, ds: float) -> void:
 	_animate(ds)
 
 
+## Everyone but the player's household always acts on their own.
+func _free() -> bool:
+	if resident:
+		return game.free_will
+	return vstate == "home" or vstate == "guest"
+
+
+func _msg(text: String, snd := "") -> void:
+	if resident or (world == game.world and not away):
+		game.msg(text, snd)
+
+
 func _age(dh: float) -> void:
 	age += dh / 24.0 * game.age_rate
-	if resident and away:
+	if away and vstate == "home":
 		return  # at work or school; catch up when home
 	var st := stage()
 	if st != _stage:
@@ -406,8 +428,6 @@ func _age(dh: float) -> void:
 		var known: bool = resident or game.known(self)
 		var who := first() if resident else "Your neighbour %s" % pname
 		if st == "adult":
-			if not resident and rng.randf() < 0.75:
-				job = {"career": rng.randi() % Defs.CAREERS.size(), "level": 0, "perf": 0.0}
 			if known:
 				game.msg("%s has grown up." % who, "jingle")
 		elif st == "elder":
@@ -458,7 +478,7 @@ func _decay(dh: float) -> void:
 func _check_critical(dh: float) -> void:
 	if needs.hunger <= 0.0:
 		if starve_t == 0.0:
-			game.msg("%s is starving and needs food now." % first(), "error")
+			_msg("%s is starving and needs food now." % first(), "error")
 		starve_t += dh
 		if starve_t >= 10.0:
 			die("starvation")
@@ -471,14 +491,14 @@ func _check_critical(dh: float) -> void:
 		cur = {"kind": "passout", "label": "Passed out", "state": "do", "t": 0.0, "dur": 3.0,
 			"rates": {"energy": 12.0}, "posed": true, "def": {"sleep": true, "bubble": "Zzz"}}
 		set_pose("lie", 0.0)
-		game.msg("%s collapsed from exhaustion." % first())
+		_msg("%s collapsed from exhaustion." % first())
 		_count("passed out")
 	if needs.bladder <= 0.0:
 		needs.bladder = 100.0
 		needs.hygiene = maxf(0.0, needs.hygiene - 60.0)
 		needs.comfort = maxf(0.0, needs.comfort - 30.0)
 		say("Oops!", 3.0)
-		game.msg("%s had an accident." % first())
+		_msg("%s had an accident." % first())
 		_count("accident")
 		if world.can_place("puddle", tile.x, tile.y, 0):
 			world.add_object("puddle", tile.x, tile.y, 0)
@@ -581,10 +601,10 @@ func _arrive(a: Dictionary) -> void:
 		"use", "eat":
 			var it: Dictionary = a.def
 			var cost: int = it.get("cost", 0)
-			if cost > game.money:
+			if cost > hh.money:
 				_fail(a, "$?")
 				return
-			game.money -= cost
+			hh.money -= cost
 			var rates: Dictionary = it.get("needs", {}).duplicate()
 			var o = a.get("obj")
 			var seat = a.get("seat")
@@ -633,7 +653,7 @@ func _arrive(a: Dictionary) -> void:
 			if o.vstate == "waiting" and resident:
 				o.vstate = "guest"
 				o.visit_t = 0.0
-				game.msg("%s came in to visit." % o.first())
+				_msg("%s came in to visit." % o.first())
 		"work":
 			var c = sched()
 			if c == null or game.hour() >= c["start"] + c["hours"] - 0.5:
@@ -668,7 +688,7 @@ func _do(a: Dictionary, dh: float) -> void:
 		var before := int(skills[s])
 		skills[s] = minf(10.0, skills[s] + it["skill"][s] * dh)
 		if int(skills[s]) > before:
-			game.msg("%s reached %s level %d." % [first(), s, int(skills[s])], "jingle")
+			_msg("%s reached %s level %d." % [first(), s, int(skills[s])], "jingle")
 	if it.has("bubble") and bubble_t <= 0.0:
 		say(it["bubble"], 1.5)
 		if a.kind in ["social", "recv"] or it.get("talk", false):
@@ -695,7 +715,10 @@ func _fail(a: Dictionary, text := "?") -> void:
 	_count("failed")
 	_finish(a, false)
 	if a.get("tag", "") != "":
-		_walk_off()
+		if vstate == "heading":
+			vstate = "home"
+		else:
+			_walk_off()
 
 
 func _count(key: String) -> void:
@@ -716,7 +739,7 @@ func _finish(a: Dictionary, ok: bool) -> void:
 		return
 	_count(a.label.split(":")[0].split(" (")[0])
 	var it: Dictionary = a.get("def", {})
-	if it.has("end_snd") and game.sfx != null:
+	if it.has("end_snd") and game.sfx != null and world == game.world:
 		game.sfx.play_at(it["end_snd"], position)
 	match a.kind:
 		"goto":
@@ -725,19 +748,21 @@ func _finish(a: Dictionary, ok: bool) -> void:
 					vstate = "waiting"
 					wait_t = 1.5
 					face(world.tile_center(tile + Vector2i(0, -1)))
-					game.msg("%s is at the door. Greet them to let them in." % pname, "knock")
+					_msg("%s is at the door. Greet them to let them in." % pname, "knock")
 				"leave":
 					_walk_off()
+				"out":
+					_to_street()
 		"use", "eat":
 			match it.get("special", ""):
 				"job":
 					game.assign_job(self)
 				"paint":
 					var v := int(20 + skills.creativity * 30 + rng.randi_range(0, 40))
-					game.money += v
-					game.msg("%s sold a painting for $%d." % [first(), v], "coin")
+					hh.money += v
+					_msg("%s sold a painting for $%d." % [first(), v], "coin")
 				"remove":
-					game.remove_object(a.obj)
+					game.remove_object(a.obj, world)
 				"invite":
 					game.invite(self, a.get("who"))
 				"adopt":
@@ -789,42 +814,69 @@ func _tick_away(dh: float) -> void:
 	if c != null and h < c["start"] + c["hours"] and h >= c["start"] - 1.5:
 		return
 	away = false
-	visible = true
+	visible = world == game.world
 	cur = null
 	tile = world.exit_tile
 	position = world.tile_center(tile)
 	_count("worked")
 	if job == null or c == null:
 		skills.logic = minf(10.0, skills.logic + 0.12)
-		game.msg("%s is home from school." % first())
+		_msg("%s is home from school." % first())
 		return
 	var pay: int = c["pay"][job.level]
-	game.money += pay
+	hh.money += pay
 	job.perf += 14.0 + (mood() - 50.0) * 0.5
-	game.msg("%s is home from work (+$%d)." % [first(), pay], "coin")
+	_msg("%s is home from work (+$%d)." % [first(), pay], "coin")
 	if job.level < 4 and job.perf >= 100.0:
 		if skills[c["skill"]] >= (job.level + 1) * 2.0:
 			job.level += 1
 			job.perf = 0.0
-			game.msg("%s was promoted to %s." % [first(), c["titles"][job.level]], "jingle")
+			_msg("%s was promoted to %s." % [first(), c["titles"][job.level]], "jingle")
 		else:
 			job.perf = 100.0
 
 
 # ---------------------------------------------------------------- visiting
 
-## Brings a neighbour onto the street; if `enter`, they walk up to the front door.
+func visiting() -> bool:
+	return world != hh.world
+
+
+## Sends a neighbour out of their own front door and onto the street. If `enter`,
+## they walk up to the player's door; otherwise they just stroll past.
 func start_visit(enter: bool) -> void:
+	if vstate != "home" or away or dead:
+		return
+	cancel_current()
+	queue.clear()
+	stroll_enter = enter
+	vstate = "heading"
+	cur = act_goto(world.exit_tile, false, "out")
+	cur.label = "Heading out"
+
+
+func _to_street() -> void:
+	world = game.world
 	var left := rng.randf() < 0.5
 	position = Vector3(-28.0 if left else World.W + 28.0, 0, World.H + 1.0)
-	stroll_enter = enter
-	stroll_x = world.exit_tile.x + 0.5 if enter else (World.W + 28.0 if left else -28.0)
+	stroll_x = world.exit_tile.x + 0.5 if stroll_enter else (World.W + 28.0 if left else -28.0)
 	vstate = "stroll"
 	away = true
 	visible = true
 	cur = null
 	queue.clear()
 	set_pose("stand", 0.0)
+
+
+func _go_home() -> void:
+	world = hh.world
+	tile = world.exit_tile
+	position = world.tile_center(tile)
+	visible = false
+	away = false
+	vstate = "home"
+	cur = null
+	queue.clear()
 
 
 func come_in() -> void:
@@ -852,52 +904,45 @@ func _walk_off() -> void:
 	stroll_x = -28.0 if rng.randf() < 0.5 else World.W + 28.0
 
 
-## Returns true when the neighbour is on the lot and should run the normal tick.
-func _visitor_tick(dh: float, ds: float) -> bool:
-	match vstate:
-		"off":
-			# Home life happens off the lot: they look after themselves there.
-			for n in Defs.NEEDS:
-				needs[n] = move_toward(needs[n], 85.0, 12.0 * dh)
-			return false
-		"stroll":
-			var step := WALK * ds
-			position.z = move_toward(position.z, World.H + 1.0, step)
-			var dx := stroll_x - position.x
-			if absf(dx) <= step:
-				position.x = stroll_x
-				if stroll_enter:
-					vstate = "arriving"
-					away = false
-					tile = world.exit_tile
-					position = world.tile_center(tile)
-					cur = act_goto(world.door_tile, false, "arrive")
-					cur.label = "Visiting"
-				else:
-					vstate = "off"
-					visible = false
-			else:
-				position.x += signf(dx) * step
-				rotation.y = PI / 2.0 * signf(dx)
-				anim_t += ds
-				var sw := sin(anim_t * 9.0) * 0.7
-				leg_l.rotation.x = sw
-				leg_r.rotation.x = -sw
-				arm_l.rotation.x = -sw * 0.8
-				arm_r.rotation.x = sw * 0.8
-			return false
-		"waiting":
-			wait_t -= dh
-			if wait_t <= 0.0:
-				game.msg("%s gave up waiting and went home." % first())
-				leave()
-		"guest":
-			visit_t += dh
-			var h: float = game.hour()
-			if visit_t > 3.5 or h >= 23.0 or h < 6.0 or needs.energy < 25.0 or needs.hunger < 22.0 or mood() < 32.0 or busy_now(1.0):
-				game.msg("%s said goodbye and went home." % first())
-				leave()
-	return true
+## Walking along the street in front of the player's lot.
+func _stroll(ds: float) -> void:
+	var step := WALK * ds * (0.75 if _stage == "elder" else 1.0)
+	position.z = move_toward(position.z, World.H + 1.0, step)
+	var dx := stroll_x - position.x
+	if absf(dx) <= step:
+		position.x = stroll_x
+		if stroll_enter:
+			vstate = "arriving"
+			away = false
+			tile = world.exit_tile
+			position = world.tile_center(tile)
+			cur = act_goto(world.door_tile, false, "arrive")
+			cur.label = "Visiting"
+		else:
+			_go_home()
+		return
+	position.x += signf(dx) * step
+	rotation.y = PI / 2.0 * signf(dx)
+	anim_t += ds
+	var sw := sin(anim_t * 9.0) * 0.7
+	leg_l.rotation.x = sw
+	leg_r.rotation.x = -sw
+	arm_l.rotation.x = -sw * 0.8
+	arm_r.rotation.x = sw * 0.8
+
+
+func _visit_tick(dh: float) -> void:
+	if vstate == "waiting":
+		wait_t -= dh
+		if wait_t <= 0.0:
+			_msg("%s gave up waiting and went home." % first())
+			leave()
+	else:
+		visit_t += dh
+		var h: float = game.hour()
+		if visit_t > 3.5 or h >= 23.0 or h < 6.0 or needs.energy < 25.0 or needs.hunger < 22.0 or mood() < 32.0 or busy_now(1.0):
+			_msg("%s said goodbye and went home." % first())
+			leave()
 
 
 # ---------------------------------------------------------------- autonomy
@@ -961,7 +1006,7 @@ func _autonomous() -> void:
 			var g := _gains(it)
 			var dist := Vector2(o.tile - tile).length()
 			cands.append([_score(g, it) / (1.0 + 0.03 * dist), act_use(o, it, true), g])
-	for p in game.everyone():
+	for p in game.present(world):
 		if p == self or not p.can_socialize():
 			continue
 		if resident and p.vstate == "waiting":
@@ -969,18 +1014,22 @@ func _autonomous() -> void:
 			cands.append([60.0, act_social(p, Defs.GREET, true), {"social": 10.0}])
 			low = ""
 			continue
-		if not resident and not p.resident:
+		if visiting() and p.visiting():
 			continue
 		var r: float = game.get_rel(self, p)
 		var dist := Vector2(p.tile - tile).length()
 		for sd in Defs.SOCIALS:
-			if r < sd["min_rel"] or not sd.get("auto", true):
+			if r < sd["min_rel"]:
 				continue
+			if not sd.get("auto", true):
+				# Rule: the player decides for their own household; other couples decide for themselves.
+				if sd["id"] != "baby" or resident or not can_have_child_with(p) or rng.randf() > 0.05:
+					continue
 			if sd["id"] == "insult" and (r > -30.0 or traits.nice > 3):
 				continue
 			var g := {"social": sd["social"] * sd["dur"], "fun": sd["fun"] * sd["dur"]}
 			var sc: float = _score(g, sd) * (0.5 + traits.outgoing * 0.1) / (1.0 + 0.03 * dist)
-			if not p.resident or not resident:
+			if p.visiting() or visiting():
 				sc *= 1.6  # hosts and guests seek each other out
 			cands.append([sc, act_social(p, sd, true), g])
 	if low != "":
@@ -1051,10 +1100,12 @@ func save_state() -> Dictionary:
 	var lk := {}
 	for k in look:
 		lk[k] = look[k].to_html() if look[k] is Color else look[k]
+	var at_home: bool = vstate == "home" and not visiting()
+	var t := tile if at_home else hh.world.exit_tile
 	return {
 		"pid": pid, "seed": seed_v, "household": household, "name": pname, "resident": resident, "age": age, "lifespan": lifespan,
-		"look": lk, "needs": needs, "traits": traits, "skills": skills, "job": job, "tile": [tile.x, tile.y],
-		"away": away and resident, "work_day": work_day, "work_flag_day": work_flag_day, "starve_t": starve_t,
+		"look": lk, "needs": needs, "traits": traits, "skills": skills, "job": job, "tile": [t.x, t.y],
+		"away": away and at_home, "work_day": work_day, "work_flag_day": work_flag_day, "starve_t": starve_t,
 	}
 
 
@@ -1080,8 +1131,9 @@ func load_state(d: Dictionary) -> void:
 	starve_t = d.get("starve_t", 0.0)
 	_stage = stage()
 	_build()
-	if resident:
+	if true:
 		position = world.tile_center(tile)
+		visible = hh.player
 		if d.get("away", false) and sched() != null:
 			away = true
 			visible = false

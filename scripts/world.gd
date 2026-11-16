@@ -21,6 +21,8 @@ var room_of := PackedInt32Array()
 var room_scores := {}
 var outside_room := 0
 var walls_up := false
+## Headless lots are fully simulated but build no meshes, materials or scenery.
+var headless := false
 var night := false
 var door_tile := Vector2i.ZERO
 var exit_tile := Vector2i.ZERO
@@ -44,10 +46,11 @@ func setup(seed_v: int, data = null) -> void:
 	add_child(_wall_root)
 	_obj_root = Node3D.new()
 	add_child(_obj_root)
-	for i in Defs.FLOORS.size():
-		var f: Dictionary = Defs.FLOORS[i]
-		_floor_mats.append(Meshes.tex_mat(f["tex"], f["tint"], seed_v + i) if f.has("tex") else null)
-	_build_scenery(seed_v)
+	if not headless:
+		for i in Defs.FLOORS.size():
+			var f: Dictionary = Defs.FLOORS[i]
+			_floor_mats.append(Meshes.tex_mat(f["tex"], f["tint"], seed_v + i) if f.has("tex") else null)
+		_build_scenery(seed_v)
 	if data != null:
 		load_state(data)
 	else:
@@ -123,7 +126,7 @@ func can_place(kind: String, x: int, y: int, r: int) -> bool:
 
 func add_object(kind: String, x: int, y: int, r: int, oseed := -1) -> SimObject:
 	var o := SimObject.new()
-	o.setup(kind, Vector2i(x, y), r, oseed if oseed >= 0 else int(rng.randi()))
+	o.setup(kind, Vector2i(x, y), r, oseed if oseed >= 0 else int(rng.randi()), not headless)
 	_obj_root.add_child(o)
 	var d: Dictionary = soft if o.def.get("soft", false) else occ
 	for t in o.footprint():
@@ -363,6 +366,8 @@ func _wp(c: Vector3, ax: bool, off: float, length: float, y0: float, y1: float, 
 
 
 func rebuild_walls() -> void:
+	if headless:
+		return
 	for c in _wall_root.get_children():
 		c.queue_free()
 	var h := WALL_H if walls_up else 0.35
@@ -397,6 +402,8 @@ func rebuild_walls() -> void:
 
 
 func rebuild_floors() -> void:
+	if headless:
+		return
 	for c in _floor_root.get_children():
 		c.queue_free()
 	for f in range(1, Defs.FLOORS.size()):
