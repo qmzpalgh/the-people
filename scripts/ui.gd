@@ -452,8 +452,8 @@ func debug_open(what: String) -> void:
 	if _ui_word(what, "cat:") in Defs.CATS:
 		cat = _ui_word(what, "cat:")
 		build_side()
-	if Defs.OBJECTS.has(_ui_word(what, "pick:")):
-		game.set_buy(_ui_word(what, "pick:"))
+	if Defs.OBJECTS.has(_ui_word(what, "buy:")):
+		game.set_buy(_ui_word(what, "buy:"))
 	if what.contains("options"):
 		_open_options.call_deferred()
 
