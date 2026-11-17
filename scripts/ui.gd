@@ -39,10 +39,8 @@ var queue_box: HFlowContainer
 var needs_box: GridContainer
 var bars := {}
 var info_l: Label
-var needs_btn: Button
-var info_btn: Button
-var needs_open := false
-var info_open := false
+var tab_btns := {}
+var card_tab := ""
 var side: PanelContainer
 var side_title: Label
 var cat_box: HFlowContainer
@@ -107,8 +105,6 @@ func _ready() -> void:
 	var head := _hbox(cv, 2)
 	name_l = _label(head, "", 17)
 	name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	needs_btn = _seg(head, "Needs", func(): needs_open = not needs_open)
-	info_btn = _seg(head, "About", func(): info_open = not info_open)
 	act_l = _label(cv, "", 13)
 	act_l.add_theme_color_override("font_color", MUTED)
 	mood_bar = _bar(cv, 0, 6)
@@ -117,6 +113,9 @@ func _ready() -> void:
 	cv.add_child(alerts)
 	queue_box = HFlowContainer.new()
 	cv.add_child(queue_box)
+	var tabs := _hbox(cv, 2)
+	for t in CARD_TABS:
+		tab_btns[t] = _tab(tabs, t)
 	needs_box = GridContainer.new()
 	needs_box.columns = 4
 	needs_box.add_theme_constant_override("h_separation", 8)
@@ -437,8 +436,10 @@ func show_game_over() -> void:
 
 
 func debug_open(what: String) -> void:
-	needs_open = what.contains("needs")
-	info_open = what.contains("info")
+	card_tab = "needs" if what.contains("needs") else "work" if what.contains("info") else ""
+	for t in CARD_TABS:
+		if what.contains("tab:" + t):
+			card_tab = t
 	if what.contains("help"):
 		toggle_help()
 	if what.contains("floors"):
@@ -617,14 +618,15 @@ func _refresh_card() -> void:
 	name_l.text = s.pname
 	act_l.text = s.activity()
 	_set_bar(mood_bar, s.mood())
-	needs_btn.set_pressed_no_signal(needs_open)
-	info_btn.set_pressed_no_signal(info_open)
-	needs_box.visible = needs_open
-	info_l.visible = info_open
+	for t in tab_btns:
+		tab_btns[t].set_pressed_no_signal(t == card_tab)
+	needs_box.visible = card_tab == "needs"
+	# Tabs still on the old text. Each leaves this list when it gets a block of its own.
+	info_l.visible = card_tab in ["work", "skills", "traits", "people"]
 
 	# Only the needs that want attention surface on their own.
 	var low := []
-	if not needs_open and not s.away:
+	if card_tab != "needs" and not s.away:
 		for n in Defs.NEEDS:
 			if s.needs[n] < 30.0:
 				low.append(n)
@@ -649,10 +651,10 @@ func _refresh_card() -> void:
 			b.add_theme_stylebox_override("normal", _sb(Color(INK, 0.07), 9, 8, 2))
 			b.tooltip_text = "Cancel"
 
-	if needs_open:
+	if card_tab == "needs":
 		for n in Defs.NEEDS:
 			_set_bar(bars[n], s.needs[n])
-	if info_open:
+	if info_l.visible:
 		var lines := [s.stage_text()]
 		if s.job != null:
 			var c: Dictionary = Defs.CAREERS[s.job.career]
@@ -687,3 +689,24 @@ func _refresh_card() -> void:
 		if not rl.is_empty():
 			lines.append("Knows " + ", ".join(rl))
 		info_l.text = "\n".join(lines)
+
+
+# ---------------------------------------------------------------- person card tabs
+
+## One block of the card is open at a time, or none. "" means the card is closed.
+const CARD_TABS := ["needs", "work", "skills", "traits", "people"]
+
+
+func _tab(parent: Node, t: String) -> Button:
+	var b := _seg(parent, t.capitalize(), _pick_card_tab.bind(t))
+	b.add_theme_font_size_override("font_size", 13)
+	# Slimmer than a standard button, so all five fit the card at its narrowest.
+	b.add_theme_stylebox_override("normal", _sb(Color(0, 0, 0, 0), 8, 8))
+	b.add_theme_stylebox_override("hover", _sb(Color(INK, 0.08), 8, 8))
+	for st in ["pressed", "hover_pressed"]:
+		b.add_theme_stylebox_override(st, _sb(INK, 8, 8))
+	return b
+
+
+func _pick_card_tab(t: String) -> void:
+	card_tab = "" if card_tab == t else t
