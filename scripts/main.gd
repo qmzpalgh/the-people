@@ -22,6 +22,7 @@ var selected: Person
 var family := ""
 var households := {}        # id -> Household
 var home: Household         # the player's household
+var town: Town              # every lot on the street, as data
 var money: int:
 	get: return home.money
 	set(v): home.money = v
@@ -110,10 +111,17 @@ func _ready() -> void:
 	lot.add_child(world)
 	home.world = world
 	world.setup(seed_v, data["households"][0]["world"] if data != null else null)
+	# The town draws from its own rng, seeded from the game's, so no other draw moves.
+	town = Town.new(hash("town %d" % seed_v))
+	town.add_home(0, seed_v)
 	if data != null:
 		_load_household(data)
 	else:
 		start_household(random_spec())
+	if data != null and data.has("town"):
+		town = Town.from_dict(data["town"])
+	else:
+		town.fill()  # a new game, or a save from before towns: build the street around its households
 	cam = Cam.new()
 	lot.add_child(cam)
 	cam.position = Vector3(world.house.get_center().x + 0.5, 0, world.house.get_center().y + 1.0)
@@ -237,7 +245,10 @@ func _add_household(id: int, data = null) -> Household:
 	w.headless = true
 	w.visible = false
 	add_child(w)
-	w.setup(int(rng.randi()), data)
+	var wseed := int(rng.randi())
+	w.setup(wseed, data)
+	# A loaded world is rebuilt from its saved state, so the seed it was first made from is not known here.
+	town.add_home(id, wseed if data == null else -1)
 	w.set_night(world.night)
 	hh.world = w
 	households[id] = hh
@@ -497,6 +508,7 @@ func _neighbourhood_day() -> void:
 		if not hh.player and hh_count(hh) == 0:
 			hh.world.queue_free()
 			households.erase(id)
+			town.vacate(id)
 	if neighbours.size() < 5 and rng.randf() < 0.5:
 		_new_family(rng.randi_range(1, 2), false)
 		msg("The %s family moved in down the street." % households[next_hh - 1].family)
@@ -742,7 +754,7 @@ func save_game(quiet := false) -> void:
 	var d := {
 		"v": 2, "seed": seed_base, "minutes": minutes, "rel": rel,
 		"next_pid": next_pid, "next_hh": next_hh, "welcomed": welcomed, "pending": pending, "free_will": free_will,
-		"households": hhs,
+		"households": hhs, "town": town.to_dict(),
 		"people": everyone().map(func(p): return p.save_state()),
 	}
 	var f := FileAccess.open(save_path, FileAccess.WRITE)
@@ -1126,6 +1138,8 @@ func _report() -> void:
 			if p.job != null:
 				jb = "%s L%d" % [Defs.CAREERS[p.job.career]["name"], p.job.level]
 			print("      job %s, doing %s, actions %s" % [jb, p.activity(), p.stats])
+	for l in town.by_slot():
+		print("   lot %d slot %d %s%s seed %d" % [l["id"], l["slot"], l["kind"], " household %d" % l["household"] if l["kind"] == "home" else "", l["seed"]])
 	print("   memorials: ", households.values().map(func(h): return h.world.objects.filter(func(o): return o.kind == "grave").map(func(o): return o.label)))
 	if OS.has_environment("TP_SAVE") and _runs == 1:
 		save_game(true)
