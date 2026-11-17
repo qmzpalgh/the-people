@@ -4,6 +4,7 @@ extends RefCounted
 ## rates can be tuned against numbers rather than by feel.
 
 const GROUPS := ["worker", "jobless", "child", "elder"]
+const SKILL_MARKS := [2, 4, 6, 8, 10]
 
 var game
 var acc := {}      # group -> {hours, mood, needs: {need: [sum, low, zero]}, acts: {label: hours}, night_awake, night}
@@ -13,6 +14,7 @@ var incidents := {}
 var track := {}    # pid -> per-person state for the current run
 var deaths := 0
 var meals := []    # [group, hour, hunger_after, cooked]
+var skills := {}   # "run:pid" -> {group, top, career, level, reached: {level: day}}
 var runs := 0
 
 
@@ -101,6 +103,7 @@ func step(dh: float) -> void:
 			if c > t["stats"].get(k, 0):
 				incidents[k] = incidents.get(k, 0) + c - t["stats"].get(k, 0)
 				t["stats"][k] = c
+		_skills(p, g, h)
 		t["last"] = "%s (%s, household %d) %s, doing %s, hunger %d energy %d, failed %d" % [p.pname, g, p.household,
 			p.vstate, lab, int(p.needs.hunger), int(p.needs.energy), p.stats.get("failed", 0)]
 		track[p.pid] = t
@@ -109,6 +112,26 @@ func step(dh: float) -> void:
 			print("LOST run %d day %d %05.2f: %s" % [runs, game.day, h, track[pid]["last"]])
 			track.erase(pid)
 			deaths += 1
+
+
+## Follows each person's best skill: where it stands now and the day it first passed
+## each level, so the pace of progression can be read off the report.
+func _skills(p, g: String, h: float) -> void:
+	var key := "%d:%d" % [runs, p.pid]
+	if not skills.has(key):
+		skills[key] = {"group": g, "top": 0.0, "career": -1.0, "level": -1, "reached": {}}
+	var s: Dictionary = skills[key]
+	s["group"] = g
+	var top := 0.0
+	for k in Defs.SKILLS:
+		top = maxf(top, p.skills[k])
+	s["top"] = top
+	if p.job != null:
+		s["career"] = p.skills[Defs.CAREERS[p.job.career]["skill"]]
+		s["level"] = p.job.level
+	for lv in SKILL_MARKS:
+		if top >= lv and not s["reached"].has(lv):
+			s["reached"][lv] = game.day + h / 24.0
 
 
 func _hist(values: Array, edges: Array) -> String:
@@ -205,6 +228,22 @@ func report() -> void:
 		line = "           first:"
 		for k in keys.slice(0, 7):
 			line += " %s %d%%," % [k if k != "" else "(nothing)", roundi(100.0 * firsts[k] / rs.size())]
+		print(line)
+	print("\nSKILLS: best skill at the end, then share of people past each level and the average day they got there")
+	for g in GROUPS:
+		var ps: Array = skills.values().filter(func(s): return s["group"] == g)
+		if ps.is_empty():
+			continue
+		var line := "  %-8s %3d people | best %4.1f" % [g, ps.size(), _mean(ps.map(func(s): return s["top"]))]
+		var cs := ps.filter(func(s): return s["career"] >= 0.0)
+		if not cs.is_empty():
+			line += ", career skill %4.1f, job level %3.1f" % [_mean(cs.map(func(s): return s["career"])), _mean(cs.map(func(s): return s["level"]))]
+		line += " |"
+		for lv in SKILL_MARKS:
+			var got := ps.filter(func(s): return s["reached"].has(lv))
+			line += "  L%d %3d%%" % [lv, roundi(100.0 * got.size() / ps.size())]
+			if not got.is_empty():
+				line += " day %4.1f" % _mean(got.map(func(s): return s["reached"][lv]))
 		print(line)
 	print("\nINCIDENTS per 100 person-days: ", incidents.keys().map(func(k): return "%s %.1f" % [k, incidents[k] * 2400.0 / total]),
 		", people lost: %d" % deaths)

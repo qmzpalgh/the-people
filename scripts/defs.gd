@@ -47,6 +47,11 @@ const MOOD_W := {
 	"fun": 1.0, "social": 1.0, "comfort": 0.8, "room": 0.6,
 }
 const SKILLS := ["cooking", "logic", "creativity", "fitness", "charisma"]
+## Skills run 0..10. An interaction's "skill" rate is levels per game hour at level 0;
+## each level already held makes the next one take SKILL_SLOWDOWN of a first level
+## longer (see skill_pace). SCHOOL_LOGIC is the practice a school day is worth.
+const SKILL_SLOWDOWN := 1.0
+const SCHOOL_LOGIC := 0.12
 const TRAITS := ["neat", "outgoing", "active", "playful", "nice"]
 const DAYS := ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 ## Front direction of an object for rotation 0..3 (tile space, y = world z).
@@ -237,6 +242,11 @@ const _SYL_A := ["Mi", "Ta", "Jo", "Ke", "Lu", "Sa", "Ro", "Ne", "Vi", "Ar", "El
 const _SYL_B := ["ra", "len", "na", "ri", "do", "ven", "la", "mi", "son", "ka", "the", "lo", "ya", "bel", "dy", "ton", "sha", "vo"]
 const _SUR_A := ["Tol", "Mar", "Has", "Pen", "Gar", "Wil", "Ash", "Bram", "Cor", "Dun", "Fen", "Hol", "Lind", "Oak", "Rav", "Stel", "Thorn", "Wex"]
 const _SUR_B := ["ven", "ley", "wick", "ford", "son", "by", "ridge", "more", "dale", "ham", "croft", "well", "stone", "shaw"]
+
+
+## How fast a skill at `level` climbs, as a share of the pace at level 0.
+static func skill_pace(level: float) -> float:
+	return 1.0 / (1.0 + SKILL_SLOWDOWN * level)
 
 
 static func first_name(rng: RandomNumberGenerator) -> String:

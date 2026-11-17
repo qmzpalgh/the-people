@@ -773,10 +773,7 @@ func _do(a: Dictionary, dh: float) -> void:
 	a.t += dh
 	var it: Dictionary = a.get("def", {})
 	for s in it.get("skill", {}):
-		var before := int(skills[s])
-		skills[s] = minf(10.0, skills[s] + it["skill"][s] * dh)
-		if int(skills[s]) > before:
-			_msg("%s reached %s level %d." % [first(), s, int(skills[s])], "jingle")
+		learn(s, it["skill"][s] * dh)
 	if it.has("bubble") and bubble_t <= 0.0:
 		say(it["bubble"], 1.5)
 		if a.kind in ["social", "recv"] or it.get("talk", false):
@@ -797,6 +794,15 @@ func _do(a: Dictionary, dh: float) -> void:
 		done = true
 	if done:
 		_finish(a, true)
+
+
+## Adds practice to a skill. Rule: the higher the level, the slower it climbs, so the
+## first levels come in an evening and the last ones take weeks (Defs.SKILL_SLOWDOWN).
+func learn(s: String, amount: float) -> void:
+	var before := int(skills[s])
+	skills[s] = minf(10.0, skills[s] + amount * Defs.skill_pace(skills[s]))
+	if int(skills[s]) > before:
+		_msg("%s reached %s level %d." % [first(), s, int(skills[s])], "jingle")
 
 
 func _release(a: Dictionary) -> void:
@@ -915,7 +921,7 @@ func _tick_away(dh: float) -> void:
 	position = world.tile_center(tile)
 	_count("worked")
 	if job == null or c == null:
-		skills.logic = minf(10.0, skills.logic + 0.12)
+		learn("logic", Defs.SCHOOL_LOGIC)
 		_msg("%s is home from school." % first())
 		return
 	var pay: int = c["pay"][job.level]
