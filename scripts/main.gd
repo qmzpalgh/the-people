@@ -113,7 +113,7 @@ func _ready() -> void:
 	if data != null:
 		_load_household(data)
 	else:
-		_new_household()
+		start_household(random_spec())
 	cam = Cam.new()
 	lot.add_child(cam)
 	cam.position = Vector3(world.house.get_center().x + 0.5, 0, world.house.get_center().y + 1.0)
@@ -172,9 +172,9 @@ func _ready() -> void:
 		set_screen(OS.get_environment("TP_SCREEN"))
 
 
-func _make_person(id: int, sv: int, fam: String, hh: Household) -> Person:
+func _make_person(id: int, sv: int, fam: String, hh: Household, spec := {}) -> Person:
 	var p := Person.new()
-	p.setup(self, hh.world, id, sv, fam, hh.player)
+	p.setup(self, hh.world, id, sv, fam, hh.player, spec)
 	p.hh = hh
 	p.household = hh.id
 	lot.add_child(p)
@@ -187,12 +187,36 @@ func _make_person(id: int, sv: int, fam: String, hh: Household) -> Person:
 	return p
 
 
-func _new_household() -> void:
-	family = Defs.surname(rng)
-	home.family = family
-	var spots := world.free_tiles_in("living")
+## A random household for a new game: {family, money, members: [{name, age, look, traits}]}.
+## `name` is a first name; `look` and `traits` have the shapes a Person keeps in memory.
+func random_spec() -> Dictionary:
+	var spec := {"family": Defs.surname(rng), "money": Household.new().money, "members": []}
 	for i in rng.randi_range(2, 3):
-		var p := _make_person(i, seed_base * 7 + i * 131, family, home)
+		var r := Person.roll(_rng_for(_member_seed(i)))
+		spec["members"].append({"name": r["name"], "age": r["age"], "look": r["look"], "traits": r["traits"]})
+	return spec
+
+
+## The seed of the i-th member of a new player household: their needs, lifespan and
+## everything they roll later come from it.
+func _member_seed(i: int) -> int:
+	return seed_base * 7 + i * 131
+
+
+func _rng_for(sv: int) -> RandomNumberGenerator:
+	var r := RandomNumberGenerator.new()
+	r.seed = sv
+	return r
+
+
+## Moves the household in `spec` onto the player's lot, then fills the street around it.
+func start_household(spec: Dictionary) -> void:
+	family = spec["family"]
+	home.family = family
+	home.money = int(spec["money"])
+	var spots := world.free_tiles_in("living")
+	for i in spec["members"].size():
+		var p := _make_person(i, _member_seed(i), family, home, spec["members"][i])
 		p.tile = spots[rng.randi() % spots.size()]
 		p.position = world.tile_center(p.tile)
 		p.rotation.y = rng.randf() * TAU
