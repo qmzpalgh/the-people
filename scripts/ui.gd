@@ -52,8 +52,9 @@ var item_btns := {}
 var tool_btns := {}
 var cat := "Seating"
 var build_tab := "Walls"
-## Side of a catalogue row's thumbnail, in pixels.
+## Side of a thumbnail on a row and on a catalogue tile, in pixels.
 const PIC := 40
+const TILE_PIC := 64
 var thumbs: Thumbs
 var toasts: VBoxContainer
 var menu: PopupMenu
@@ -136,7 +137,7 @@ func _ready() -> void:
 	_place(side, Control.PRESET_CENTER_RIGHT, -12, 0)
 	var sv := VBoxContainer.new()
 	sv.add_theme_constant_override("separation", 8)
-	sv.custom_minimum_size.x = 236
+	sv.custom_minimum_size.x = 268
 	side.add_child(sv)
 	side_title = _label(sv, "", 17)
 	cat_box = HFlowContainer.new()
@@ -479,10 +480,14 @@ func build_side() -> void:
 		sb.add_theme_font_size_override("font_size", 13)
 		sb.add_theme_color_override("font_color", WARN)
 		if not game.sell:
+			var grid := GridContainer.new()
+			grid.columns = 2
+			grid.add_theme_constant_override("h_separation", 6)
+			grid.add_theme_constant_override("v_separation", 6)
+			list_box.add_child(grid)
 			for k in Defs.OBJECTS:
-				var d: Dictionary = Defs.OBJECTS[k]
-				if d["cat"] == cat:
-					item_btns[k] = _row(d["name"], "$%d" % d["price"], game.set_buy.bind(k), null, thumbs.object(k))
+				if Defs.OBJECTS[k]["cat"] == cat:
+					item_btns[k] = _tile(grid, k)
 	elif game.mode == "build":
 		side_title.text = "Build"
 		for c in ["Walls", "Floors"]:
@@ -546,6 +551,32 @@ func _pic(b: Button, pic: Texture2D) -> void:
 		b.add_theme_color_override(c, Color.WHITE)
 	b.add_theme_color_override("icon_disabled_color", Color(1, 1, 1, 0.5))
 	b.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+
+
+## A catalogue tile: the object's picture on top, its name under it and the price under
+## that. Selecting and greying work as for a row.
+func _tile(parent: Node, kind: String) -> Button:
+	var d: Dictionary = Defs.OBJECTS[kind]
+	var b := _seg(parent, d["name"], game.set_buy.bind(kind))
+	_pic(b, thumbs.object(kind))
+	b.add_theme_constant_override("icon_max_width", TILE_PIC)
+	b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	b.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP
+	b.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.add_theme_font_size_override("font_size", 13)
+	for st in [["normal", Color(0, 0, 0, 0)], ["disabled", Color(0, 0, 0, 0)], ["hover", Color(INK, 0.08)],
+			["pressed", INK], ["hover_pressed", INK]]:
+		var sb := _sb(st[1], 10, 6, 8)
+		sb.content_margin_bottom = 26
+		b.add_theme_stylebox_override(st[0], sb)
+	var l := _label(b, "$%d" % d["price"], 12)
+	l.add_theme_color_override("font_color", MUTED)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
+	l.offset_top = -26
+	l.offset_bottom = -8
+	return b
 
 
 ## The text after `key` in a TP_UI string, up to the next comma or space ("cat:Fun" gives "Fun").
