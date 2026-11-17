@@ -65,33 +65,51 @@ var shirt: Color:
 	get: return look["shirt"]
 
 
-func setup(g, w: World, id: int, sv: int, family: String, is_resident := true) -> void:
+## `spec` is one household member, {name, age, look, traits}, as built by the game's
+## random_spec() or by hand. Whatever it holds replaces the rolled value; the rest is rolled.
+func setup(g, w: World, id: int, sv: int, family: String, is_resident := true, spec := {}) -> void:
 	game = g
 	world = w
 	pid = id
 	seed_v = sv
 	resident = is_resident
 	rng.seed = sv
-	pname = Defs.first_name(rng) + " " + family
-	for n in Defs.NEEDS:
-		needs[n] = rng.randf_range(55.0, 90.0)
-	for t in Defs.TRAITS:
-		traits[t] = rng.randi_range(1, 9)
+	# Rolled even when the spec has the answer, so this person's rng goes on as it always has.
+	var r := roll(rng, is_resident)
+	pname = spec.get("name", r["name"]) + " " + family
+	needs = r["needs"]
+	traits = r["traits"]
+	traits.merge(spec.get("traits", {}), true)
 	for s in Defs.SKILLS:
 		skills[s] = 0.0
+	look = r["look"]
+	look.merge(spec.get("look", {}), true)
+	age = spec.get("age", r["age"])
+	lifespan = r["lifespan"]
+	_stage = stage()
+	_build_fixed()
+	_build()
+
+
+## A random person, drawn from `rng` in this exact order: first name, needs, traits, look,
+## age, lifespan. Same-seed games depend on the order, so add new draws at the end.
+static func roll(rng: RandomNumberGenerator, is_resident := true) -> Dictionary:
+	var r := {"name": Defs.first_name(rng), "needs": {}, "traits": {}}
+	for n in Defs.NEEDS:
+		r["needs"][n] = rng.randf_range(55.0, 90.0)
+	for t in Defs.TRAITS:
+		r["traits"][t] = rng.randi_range(1, 9)
 	var skin_tones := [Color(0.96, 0.8, 0.68), Color(0.87, 0.67, 0.5), Color(0.72, 0.5, 0.35), Color(0.52, 0.35, 0.24), Color(0.36, 0.24, 0.17)]
 	var hair_cols := [Color(0.1, 0.08, 0.07), Color(0.35, 0.22, 0.12), Color(0.75, 0.6, 0.3), Color(0.6, 0.25, 0.12), Color(0.3, 0.4, 0.7)]
-	look = {
+	r["look"] = {
 		"skin": skin_tones[rng.randi() % skin_tones.size()], "hair": hair_cols[rng.randi() % hair_cols.size()],
 		"shirt": Color.from_hsv(rng.randf(), 0.6, 0.8), "pants": Color.from_hsv(rng.randf(), 0.35, 0.4),
 		"style": rng.randi() % 4, "h": rng.randf_range(0.9, 1.08), "wide": rng.randf_range(0.9, 1.15),
 		"pitch": rng.randf_range(0.8, 1.25),
 	}
-	age = rng.randf_range(8.0, 18.0) if is_resident else rng.randf_range(8.0, 36.0)
-	lifespan = rng.randf_range(38.0, 46.0)
-	_stage = stage()
-	_build_fixed()
-	_build()
+	r["age"] = rng.randf_range(8.0, 18.0) if is_resident else rng.randf_range(8.0, 36.0)
+	r["lifespan"] = rng.randf_range(38.0, 46.0)
+	return r
 
 
 func first() -> String:
