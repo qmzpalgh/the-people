@@ -62,6 +62,7 @@ main ──┬──                                                  ├── 
 |---|---|---|---|
 | `about-pane` | now | everything | `ui.gd` (card, `_refresh_card`) |
 | `thumbnails` | now | everything | new `thumbs.gd`; `ui.gd` (`build_side`, `_row`) |
+| `playtest-fixes` | now | everything | `ui.gd` (card); `main.gd` (`set_mode`, `set_speed`, `_step`); `defs.gd`, `world.gd`, `person.gd` (easel, Creativity, Arts) |
 | `foundations` | now | `about-pane`, `thumbnails` | `main.gd` (`_ready`, start-up), `person.gd` (`setup`), new `town.gd` |
 | `town-view` | after `foundations` | `lots-and-homes`, `create-household`, both UI branches | new `town_view.gd`, `ui_town.gd`; `main.gd` (boot, input) |
 | `lots-and-homes` | after `foundations` | `town-view`, `create-household`, both UI branches | `world.gd`, `household.gd`, `defs.gd`; `main.gd` (`_new_day`, build clicks) |
@@ -80,6 +81,8 @@ So: three branches can start today, and at the widest point five run at once.
   separate blocks, not at the same line.
 - `foundations` rewrites start-up in `main.gd`, which is why the three branches behind
   it wait for it. It is four small chunks; land it first and quickly.
+- `playtest-fixes` P4 and `lots-and-homes` L5 both pause on entering Build. Land P4
+  first; L5 then only has to open Build mode.
 - Suggested merge order: `foundations`, then `about-pane` and `thumbnails` whenever they
   are ready, then `lots-and-homes`, `create-household`, `town-view`, and last
   `new-game-flow`.
@@ -123,6 +126,19 @@ block is open at a time and the card stays compact.
 | H5 | **Floor swatches.** Floor rows show the real floor texture (`Meshes.make_tex`) in place of the flat colour square. | `TP_MODE=build TP_UI=floors TP_SHOT=floors.png`. |
 | H6 | **Wall tools.** Wall, door, window and remove get a rendered picture of a short wall section through H1. | Screenshot of the Walls tab. |
 | H7 | **Regression.** Sell mode, the placement ghost and the disabled state all still behave. | `TP_SELFTEST` output matches the output from before H1. |
+
+### `playtest-fixes`
+
+From the first playtest of `main` after `foundations`, `about-pane` and `thumbnails`
+merged (2026-11-18). Five small fixes; any order.
+
+| # | Chunk | Done when |
+|---|---|---|
+| P1 | **Card stops jumping.** The card is anchored bottom-left and grows upwards, so switching tabs moves the tab strip, and the tab you just clicked slides away from the mouse. Fix: give the tab content one fixed height, the tallest of Needs, Work, Skills and Traits, so the strip never moves; People scrolls inside it when the list is longer. Also tween the height (about 0.15 s) for the few things that still change it (alerts, the queue row). | Screenshots of all five tabs: the tab strip is at the same pixel row in each. A scripted click through the five tabs reports the same strip position every time. |
+| P2 | **Start rested.** People were exhausted after their first day of work. A new game starts at 07:30 (`minutes := 7.5 * 60.0` in `main.gd`), but each need, energy included, is rolled between 55 and 90 (`Person.roll`), so some start the day half tired. Roll starting energy between 85 and 100 instead. The other needs keep their range. The number of draws stays the same, so nothing else in the run moves. | The balance probe's first-day sleep times move later, and no adult falls asleep before 20:00 on day 0. The gate runs clean; only day-0 energy and what follows from it change. |
+| P3 | **Remove painting.** Take out the easel: its `Defs.OBJECTS` entry, its place in `World._furnish`'s extras, the `paint` special in `person.gd` and its mesh. Old saves with an easel drop it on load and refund its price. Following choice 10, also remove the Creativity skill and the Arts career. | No `easel`, `paint`, `creativity` or `Arts` left in `scripts/`. An old save with someone in Arts loads with them in another career. An old save with an easel loads with money up by $350 and no easel. Gate runs clean; its output changes because the generator draws differ, so take a new baseline. |
+| P4 | **Buy and Build pause the game.** Entering Buy or Build pauses; going back to Live restores the speed from before, unless the player picked a speed while in Buy or Build. | Scripted: speed 2, Buy, Live gives speed 2. Speed 2, Build, press 3, Live gives speed 3. Needs do not move while in Buy or Build. |
+| P5 | **Skip while everyone is out.** When every member of the player's household is away (work or school), the game runs at speed 3 and shows "Everyone's out. Skipping ahead." When the first one comes home, it returns to the speed from before. A paused game is never skipped. Picking a speed while skipping ends the skip for that day. `TP_TEST` runs ignore it, since they do not use `speed`. | Scripted day: speed 1 at 07:00, speed 3 once the last person leaves, back to 1 when the first returns. With a member who stays home (an elder or a toddler), the speed never changes. Gate output unchanged. |
 
 ### `town-view` (needs `foundations`)
 
@@ -198,6 +214,12 @@ chunks, not the whole plan.
 7. **Traits use a 25-point budget** instead of free sliders.
 8. **The About pane becomes tabs on the existing card**, not a separate window.
 9. **Voice pitch is left out of the creator** while audio is switched off.
+10. **Painting goes, and with it the Creativity skill and the Arts career** (P3). Nothing
+    but the easel trains Creativity, so keeping it would leave a skill nobody can raise
+    and a career nobody can be promoted in. On load, saved Creativity levels are ignored
+    and anyone in Arts is given another career. The alternative is to keep both and leave
+    Arts stuck until a new hobby trains Creativity. Either way, the Skills tab (A4) then
+    shows four rows, not five.
 
 ## Later
 
