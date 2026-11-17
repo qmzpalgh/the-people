@@ -44,6 +44,8 @@ var work_box: VBoxContainer
 var work_l: Array = []  # title, detail, next step, needs
 var perf_row: HBoxContainer
 var perf_bar: ProgressBar
+var skills_box: GridContainer
+var skill_rows := {}  # skill -> [name, career dot, level, bar]
 var tab_btns := {}
 var card_tab := ""
 var side: PanelContainer
@@ -137,6 +139,7 @@ func _ready() -> void:
 		l.custom_minimum_size.x = 58
 		bars[n] = _bar(needs_box, 84, 8)
 	_build_work(cv)
+	_build_skills(cv)
 	info_l = _label(cv, "", 13)
 
 	# Catalogue and build tools.
@@ -643,8 +646,9 @@ func _refresh_card() -> void:
 		tab_btns[t].set_pressed_no_signal(t == card_tab)
 	needs_box.visible = card_tab == "needs"
 	work_box.visible = card_tab == "work"
+	skills_box.visible = card_tab == "skills"
 	# Tabs still on the old text. Each leaves this list when it gets a block of its own.
-	info_l.visible = card_tab in ["skills", "traits", "people"]
+	info_l.visible = card_tab in ["traits", "people"]
 
 	# Only the needs that want attention surface on their own.
 	var low := []
@@ -678,14 +682,10 @@ func _refresh_card() -> void:
 			_set_bar(bars[n], s.needs[n])
 	if work_box.visible:
 		_refresh_work(s)
+	if skills_box.visible:
+		_refresh_skills(s)
 	if info_l.visible:
 		var lines := []
-		var sk := []
-		for k in Defs.SKILLS:
-			if s.skills[k] >= 1.0:
-				sk.append("%s %d" % [k.capitalize(), int(s.skills[k])])
-		if not sk.is_empty():
-			lines.append("Skills: " + ", ".join(sk))
 		var tr := []
 		for t in Defs.TRAITS:
 			if s.traits[t] >= 7:
@@ -794,3 +794,52 @@ func _refresh_work(s: Person) -> void:
 	perf_row.visible = s.job != null
 	if s.job != null:
 		perf_bar.value = clampf(s.job.perf, 0.0, 100.0)
+
+
+# ---------------------------------------------------------------- skills tab
+
+func _build_skills(parent: Node) -> void:
+	skills_box = GridContainer.new()
+	skills_box.columns = 3
+	skills_box.add_theme_constant_override("h_separation", 8)
+	skills_box.add_theme_constant_override("v_separation", 5)
+	parent.add_child(skills_box)
+	for k in Defs.SKILLS:
+		var cell := _hbox(skills_box, 5)
+		cell.custom_minimum_size.x = 92
+		var nm := _label(cell, k.capitalize(), 13)
+		var dot := Panel.new()
+		dot.add_theme_stylebox_override("panel", _sb(GOLD, 3, 0, 0))
+		dot.custom_minimum_size = Vector2(6, 6)
+		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		cell.add_child(dot)
+		var lvl := _label(skills_box, "", 13)
+		lvl.custom_minimum_size.x = 18
+		lvl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		var bar := _bar(skills_box, 0, 8)
+		bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		skill_rows[k] = [nm, dot, lvl, bar]
+
+
+## The bar is progress through the current level; at 10 the skill is full.
+func _refresh_skills(s: Person) -> void:
+	var marked := ""
+	var why := ""
+	if s.job != null:
+		marked = Defs.CAREERS[s.job.career]["skill"]
+		why = "Career skill: %s" % Defs.CAREERS[s.job.career]["name"]
+	elif s.stage() == "child":
+		marked = "logic"
+		why = "Practised at school"
+	for k in skill_rows:
+		var v: float = s.skills[k]
+		var row: Array = skill_rows[k]
+		row[1].visible = k == marked
+		row[1].tooltip_text = why
+		row[2].text = str(int(v))
+		row[3].value = 100.0 if v >= 10.0 else fmod(v, 1.0) * 100.0
+		row[3].tooltip_text = "Top level" if v >= 10.0 else "%d%% of the way to level %d" % [int(fmod(v, 1.0) * 100.0), int(v) + 1]
+		# Never practised: greyed, not hidden.
+		var a := 0.45 if v <= 0.0 else 1.0
+		row[0].modulate.a = a
+		row[2].modulate.a = a
