@@ -47,6 +47,11 @@ const MOOD_W := {
 	"fun": 1.0, "social": 1.0, "comfort": 0.8, "room": 0.6,
 }
 const SKILLS := ["cooking", "logic", "creativity", "fitness", "charisma"]
+
+## Looks. A person's "style" is an index into HAIR_STYLES; person.gd draws one shape per index.
+const SKIN_TONES := [Color(0.96, 0.8, 0.68), Color(0.87, 0.67, 0.5), Color(0.72, 0.5, 0.35), Color(0.52, 0.35, 0.24), Color(0.36, 0.24, 0.17)]
+const HAIR_COLOURS := [Color(0.1, 0.08, 0.07), Color(0.35, 0.22, 0.12), Color(0.75, 0.6, 0.3), Color(0.6, 0.25, 0.12), Color(0.3, 0.4, 0.7)]
+const HAIR_STYLES := ["Cropped", "Long", "Bun", "Flat top"]
 ## Skills run 0..10. An interaction's "skill" rate is levels per game hour at level 0;
 ## each level already held makes the next one take SKILL_SLOWDOWN of a first level
 ## longer (see skill_pace). SCHOOL_LOGIC is the practice a school day is worth.
