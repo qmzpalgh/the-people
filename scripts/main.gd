@@ -1129,6 +1129,8 @@ func _report() -> void:
 	for id in households:
 		var hh: Household = households[id]
 		print("--- household %d %s%s: $%d, %d objects" % [id, hh.family, " (player)" if hh.player else "", hh.money, hh.world.objects.size()])
+		var v := hh.world.value_parts()
+		print("      home value $%d (walls $%d, doors $%d, windows $%d, floors $%d, objects $%d)" % [v["total"], v["walls"], v["doors"], v["windows"], v["floors"], v["objects"]])
 		for p in household_of(id):
 			var line := "  %-9s %-5s age %4.1f %s |" % [p.first(), p.stage(), p.age, p.vstate]
 			for n in Defs.NEEDS:

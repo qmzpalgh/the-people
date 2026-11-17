@@ -853,6 +853,29 @@ func load_state(d: Dictionary) -> void:
 	rng.state = int(d.get("rng", "1"))
 
 
+## What the lot as it stands would cost to build at build and buy prices.
+func value() -> int:
+	return value_parts()["total"]
+
+
+## value() by part: {walls, doors, windows, floors, objects, total}. A door or window goes into
+## a wall that is already there, as the build tools charge, so its edge counts a wall as well.
+## Grass is free; scenery beyond the lot is not an object and counts nothing.
+func value_parts() -> Dictionary:
+	var v := {"walls": 0, "doors": 0, "windows": 0, "floors": 0, "objects": 0}
+	for k in walls:
+		v["walls"] += Defs.WALL_PRICE
+		match int(walls[k]):
+			2: v["doors"] += Defs.DOOR_PRICE
+			3: v["windows"] += Defs.WINDOW_PRICE
+	for f in floors:
+		v["floors"] += int(Defs.FLOORS[f]["price"])
+	for o in objects:
+		v["objects"] += int(o.def["price"])
+	v["total"] = v["walls"] + v["doors"] + v["windows"] + v["floors"] + v["objects"]
+	return v
+
+
 ## Nearest tile to `t` where a 1x1 object can go.
 func free_tile_near(t: Vector2i):
 	for r in 6:
