@@ -576,7 +576,72 @@ func _tile(parent: Node, kind: String) -> Button:
 	l.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
 	l.offset_top = -26
 	l.offset_bottom = -8
+	b.tooltip_text = _details(kind)
 	return b
+
+
+## What an object is for, in a few short lines: what people can do with it (as its click
+## menu names them), then how comfortable it is and what it does for the room, if anything.
+func _details(kind: String) -> String:
+	var d: Dictionary = Defs.OBJECTS[kind]
+	var lines := []
+	var uses := []
+	var comfort: float = d.get("comfort", 0.0)
+	for it in d.get("acts", []):
+		comfort = maxf(comfort, it.get("needs", {}).get("comfort", 0.0))
+		if it.get("hidden", false):
+			continue
+		var label: String = it["label"]
+		if it.has("req"):
+			label += " with a " + Defs.OBJECTS[it["req"]]["name"].to_lower()
+		uses.append(label)
+	# An object with only hidden acts is used from another one (the stove, from the fridge).
+	for k in Defs.OBJECTS:
+		for it in Defs.OBJECTS[k].get("acts", []):
+			if uses.is_empty() and (it.get("req", "") == kind or it.get("then", {}).get("kind", "") == kind):
+				uses.append("Needed to %s at the %s" % [it["label"].get_slice(" (", 0).to_lower(), Defs.OBJECTS[k]["name"].to_lower()])
+	if d.get("light", false):
+		uses.append("Lights the room at night")
+	if uses.is_empty():
+		uses.append("Garden decoration" if d["cat"] == "Garden" else "Decoration")
+	lines.append(_wrap(uses, 34))
+	if d.get("seat", false):
+		lines.append("A seat for meals, TV and reading")
+	if comfort >= 45.0:
+		lines.append("Very comfortable")
+	elif comfort >= 25.0:
+		lines.append("Comfortable")
+	elif comfort > 0.0:
+		lines.append("A little comfortable")
+	var room: float = d.get("room", 0.0)
+	var nicer := ""
+	if room >= 5.0:
+		nicer = "Makes the room much nicer"
+	elif room >= 2.0:
+		nicer = "Makes the room nicer"
+	elif room > 0.0:
+		nicer = "Makes the room a little nicer"
+	elif room < 0.0:
+		nicer = "Makes the room worse"
+	# Outdoors has a fixed room score, so garden things only count inside a room.
+	if nicer != "" and d["cat"] == "Garden":
+		nicer += " (indoors only)"
+	if nicer != "":
+		lines.append(nicer)
+	return "\n".join(lines)
+
+
+## Joins `items` with commas, starting a new line between items rather than past `width`.
+func _wrap(items: Array, width: int) -> String:
+	var out := ""
+	var line := ""
+	for w in items:
+		if line != "" and line.length() + 2 + w.length() > width:
+			out += line + ",\n"
+			line = w
+		else:
+			line = w if line == "" else line + ", " + w
+	return out + line
 
 
 ## The text after `key` in a TP_UI string, up to the next comma or space ("cat:Fun" gives "Fun").
@@ -646,6 +711,11 @@ func refresh() -> void:
 			var gm: Material = Thumbs.greyed() if item_btns[k].disabled else null
 			if item_btns[k].material != gm:
 				item_btns[k].material = gm
+			# The price on a selected (ink) tile is lighter so it can be read.
+			var pl: Label = item_btns[k].get_child(0)
+			var pc := Color(1, 1, 1, 0.65) if item_btns[k].button_pressed else MUTED
+			if pl.get_theme_color("font_color") != pc:
+				pl.add_theme_color_override("font_color", pc)
 		for k in tool_btns:
 			tool_btns[k].set_pressed_no_signal(game.tool == k)
 		hint_l.text = _hint()
