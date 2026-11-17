@@ -48,6 +48,9 @@ var skills_box: GridContainer
 var skill_rows := {}  # skill -> [name, career dot, level, bar]
 var traits_box: GridContainer
 var trait_marks := {}  # trait -> marker
+var people_scroll: ScrollContainer
+var people_list: VBoxContainer
+var people_rows: Array = []  # [person, fill, word]
 var tab_btns := {}
 var card_tab := ""
 var side: PanelContainer
@@ -143,6 +146,7 @@ func _ready() -> void:
 	_build_work(cv)
 	_build_skills(cv)
 	_build_traits(cv)
+	_build_people(cv)
 	info_l = _label(cv, "", 13)
 
 	# Catalogue and build tools.
@@ -651,8 +655,8 @@ func _refresh_card() -> void:
 	work_box.visible = card_tab == "work"
 	skills_box.visible = card_tab == "skills"
 	traits_box.visible = card_tab == "traits"
-	# Tabs still on the old text. Each leaves this list when it gets a block of its own.
-	info_l.visible = card_tab in ["people"]
+	people_scroll.visible = card_tab == "people"
+	info_l.visible = false  # every tab has its own block now; A7 removes the old text
 
 	# Only the needs that want attention surface on their own.
 	var low := []
@@ -690,16 +694,8 @@ func _refresh_card() -> void:
 		_refresh_skills(s)
 	if traits_box.visible:
 		_refresh_traits(s)
-	if info_l.visible:
-		var lines := []
-		var rl := []
-		for p in game.everyone():
-			var r: float = game.get_rel(s, p)
-			if p != s and (p.resident or absf(r) >= 5.0):
-				rl.append("%s %+d" % [p.first(), int(r)])
-		if not rl.is_empty():
-			lines.append("Knows " + ", ".join(rl))
-		info_l.text = "\n".join(lines)
+	if people_scroll.visible:
+		_refresh_people(s)
 
 
 # ---------------------------------------------------------------- person card tabs
@@ -895,3 +891,126 @@ func _refresh_traits(s: Person) -> void:
 		var v: float = clampf(s.traits[t], 1, 9)
 		trait_marks[t].position.x = (v - 1.0) / 8.0 * TRAIT_W - 5.0
 		trait_marks[t].get_parent().tooltip_text = "%s %d of 9" % [t.capitalize(), int(v)]
+
+
+# ---------------------------------------------------------------- people tab
+
+const REL_W := 58.0  # width of every relationship track
+const ROW_H := 24.0
+const PEOPLE_ROWS := 6  # rows shown before the list scrolls
+
+
+func _build_people(parent: Node) -> void:
+	people_scroll = ScrollContainer.new()
+	people_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	parent.add_child(people_scroll)
+	people_list = VBoxContainer.new()
+	people_list.add_theme_constant_override("separation", 0)
+	people_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	people_scroll.add_child(people_list)
+
+
+## Everyone the selected person knows: the rest of the household always, anyone else
+## once the relationship is at least 5 either way. Household first, each group warmest first.
+func _known(s: Person) -> Array:
+	var home := []
+	var others := []
+	for p in game.everyone():
+		if p == s:
+			continue
+		var r: float = game.get_rel(s, p)
+		if p.resident:
+			home.append(p)
+		elif absf(r) >= 5.0:
+			others.append(p)
+	var warmest := func(a, b): return game.get_rel(s, a) > game.get_rel(s, b)
+	home.sort_custom(warmest)
+	others.sort_custom(warmest)
+	return [home, others]
+
+
+func _refresh_people(s: Person) -> void:
+	var groups := _known(s)
+	var sig := "%d:" % s.pid
+	for g in groups:
+		sig += ",".join(g.map(func(p): return str(p.pid))) + ";"
+	if _changed("people", sig):
+		_clear(people_list)
+		people_rows.clear()
+		var items := 0
+		if groups[0].is_empty() and groups[1].is_empty():
+			_people_note("Nobody yet.")
+			items += 1
+		for g in 2:
+			if g == 1 and not groups[1].is_empty() and not groups[0].is_empty():
+				_people_note("Neighbours")
+				items += 1
+			for p in groups[g]:
+				_people_row(p)
+				items += 1
+		people_scroll.custom_minimum_size.y = mini(items, PEOPLE_ROWS) * ROW_H
+		people_scroll.scroll_vertical = 0
+	for row in people_rows:
+		var r: float = clampf(game.get_rel(s, row[0]), -100.0, 100.0)
+		var w := absf(r) / 100.0 * REL_W / 2.0
+		row[1].color = GOOD if r >= 0.0 else WARN
+		row[1].position.x = REL_W / 2.0 if r >= 0.0 else REL_W / 2.0 - w
+		row[1].size.x = w
+		row[2].text = game._rel_word(r)
+		row[1].get_parent().tooltip_text = "%+d" % int(r)
+
+
+func _people_note(text: String) -> void:
+	var l := _label(people_list, text, 12)
+	l.add_theme_color_override("font_color", MUTED)
+	l.custom_minimum_size.y = ROW_H
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+
+
+func _people_row(p: Person) -> void:
+	var row := _hbox(people_list, 6)
+	row.custom_minimum_size.y = ROW_H
+	# A small version of the household chips: residents filled, visitors outlined.
+	var chip := PanelContainer.new()
+	var sb := _sb(p.shirt if p.resident else PAPER, 9, 0, 0)
+	if not p.resident:
+		sb.set_border_width_all(2)
+		sb.border_color = p.shirt
+	chip.add_theme_stylebox_override("panel", sb)
+	chip.custom_minimum_size = Vector2(18, 18)
+	chip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(chip)
+	var ini := _label(chip, p.first().substr(0, 1), 11)
+	ini.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	ini.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	ini.add_theme_color_override("font_color", Color.WHITE if p.resident else INK)
+	var nm := _label(row, p.pname, 13)
+	nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	nm.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	# A track centred on zero, like the trait scales: green to the right, red to the left.
+	var track := Control.new()
+	track.custom_minimum_size = Vector2(REL_W, 12)
+	track.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(track)
+	var line := Panel.new()
+	line.add_theme_stylebox_override("panel", _sb(Color(INK, 0.1), 2, 0, 0))
+	line.position = Vector2(0, 4)
+	line.size = Vector2(REL_W, 4)
+	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	track.add_child(line)
+	var fill := ColorRect.new()
+	fill.position = Vector2(REL_W / 2.0, 4)
+	fill.size = Vector2(0, 4)
+	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	track.add_child(fill)
+	var mid := ColorRect.new()
+	mid.color = Color(INK, 0.3)
+	mid.position = Vector2(REL_W / 2.0 - 0.5, 1)
+	mid.size = Vector2(1, 10)
+	mid.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	track.add_child(mid)
+	var word := _label(row, "", 12)
+	word.add_theme_color_override("font_color", MUTED)
+	word.custom_minimum_size.x = 82  # leaves a gap before the scroll bar
+	word.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	people_rows.append([p, fill, word])
