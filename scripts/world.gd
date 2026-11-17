@@ -36,7 +36,9 @@ var _obj_root: Node3D
 var _floor_mats: Array = []
 
 
-func setup(seed_v: int, data = null) -> void:
+## Builds the lot from saved `data`, or generates it from `seed_v`. With `empty`, a new
+## lot is lawn only: no house and no garden, just an entry tile at the kerb (see _gen_empty).
+func setup(seed_v: int, data = null, empty := false) -> void:
 	rng.seed = seed_v
 	floors.resize(W * H)
 	room_of.resize(W * H)
@@ -53,6 +55,8 @@ func setup(seed_v: int, data = null) -> void:
 		_build_scenery(seed_v)
 	if data != null:
 		load_state(data)
+	elif empty:
+		_gen_empty()
 	else:
 		for attempt in 40:
 			_clear()
@@ -648,6 +652,17 @@ func _gen_house() -> void:
 	_furnish(keep)
 
 
+## A bare lot: no house, rooms or garden. The entry is one stone tile on the kerb, in the
+## middle of the street side, and stands in for the front door until one is built, so the
+## door and the exit are the same tile. Draws nothing from rng.
+func _gen_empty() -> void:
+	_clear()
+	house = Rect2i()
+	door_tile = Vector2i(W / 2, H - 1)
+	exit_tile = door_tile
+	floors[idx(door_tile)] = 4
+
+
 func _make_door(k: Vector3i, keep: Dictionary) -> void:
 	walls[k] = 2
 	var a := Vector2i(k.x, k.y)
@@ -805,6 +820,23 @@ func free_tiles_in(type: String) -> Array:
 				var t := Vector2i(x, y)
 				if not occ.has(t) and path(door_tile, t) != null:
 					out.append(t)
+	if out.is_empty():
+		out.append(door_tile)
+	return out
+
+
+## Where a household moving in is put down: free tiles in the living room, or on a lot with
+## no living room, the lawn just inside the entry.
+func arrival_tiles() -> Array:
+	for rm in rooms:
+		if rm["type"] == "living":
+			return free_tiles_in("living")
+	var out := []
+	for dy in range(-2, 1):
+		for dx in range(-2, 3):
+			var t := door_tile + Vector2i(dx, dy)
+			if walkable(t) and path(door_tile, t) != null:
+				out.append(t)
 	if out.is_empty():
 		out.append(door_tile)
 	return out

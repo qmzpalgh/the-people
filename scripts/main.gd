@@ -110,7 +110,10 @@ func _ready() -> void:
 	world = World.new()
 	lot.add_child(world)
 	home.world = world
-	world.setup(seed_v, data["households"][0]["world"] if data != null else null)
+	# TP_LOT picks the lot a new game starts on: "empty" is bare land with no house. A save
+	# keeps the lot it was made on.
+	var lot_kind := OS.get_environment("TP_LOT") if data == null else ""
+	world.setup(seed_v, data["households"][0]["world"] if data != null else null, lot_kind == "empty")
 	# The town draws from its own rng, seeded from the game's, so no other draw moves.
 	town = Town.new(hash("town %d" % seed_v))
 	town.add_home(0, seed_v)
@@ -124,7 +127,9 @@ func _ready() -> void:
 		town.fill()  # a new game, or a save from before towns: build the street around its households
 	cam = Cam.new()
 	lot.add_child(cam)
-	cam.position = Vector3(world.house.get_center().x + 0.5, 0, world.house.get_center().y + 1.0)
+	# On the house, or on a lot with no house, the middle of its front, so the lawn and the
+	# household at the kerb are both in view.
+	cam.position = Vector3(world.house.get_center().x + 0.5, 0, world.house.get_center().y + 1.0) if world.house.has_area() else Vector3(World.W / 2.0, 0, World.H - 4.0)
 	ghost_mat = StandardMaterial3D.new()
 	ghost_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	ghost_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -222,7 +227,7 @@ func start_household(spec: Dictionary) -> void:
 	family = spec["family"]
 	home.family = family
 	home.money = int(spec["money"])
-	var spots := world.free_tiles_in("living")
+	var spots := world.arrival_tiles()
 	for i in spec["members"].size():
 		var p := _make_person(i, _member_seed(i), family, home, spec["members"][i])
 		p.tile = spots[rng.randi() % spots.size()]
