@@ -9,9 +9,39 @@ const NEED_NAMES := {
 }
 ## Points lost per game hour (needs run 0..100).
 const DECAY := {
-	"hunger": 4.2, "energy": 4.0, "hygiene": 2.8, "bladder": 5.5,
+	"hunger": 6.0, "energy": 3.6, "hygiene": 2.8, "bladder": 5.0,
 	"fun": 3.5, "social": 2.5, "comfort": 4.0, "room": 0.0,
 }
+## While out at work or school: [points per game hour, level it stops at].
+const AWAY := {
+	"hunger": [-3.0, 20.0], "energy": [-4.0, 10.0], "hygiene": [-2.5, 20.0], "bladder": [-3.0, 45.0],
+	"fun": [-3.0, 10.0], "social": [3.0, 100.0], "comfort": [-2.0, 20.0],
+}
+## The body clock. Left to themselves people go to bed between their BEDTIME and WAKE
+## once energy is under SLEEPY, and stay there until WAKE. By day they only nap, under
+## NAPPY and no later than NAP_GAP hours before bed. Under EXHAUSTED the clock stops
+## mattering.
+const BEDTIME := {"child": 20.5, "adult": 22.0, "elder": 21.0}
+const WAKE := 6.0
+const SLEEPY := 75.0
+const NAPPY := 40.0
+const NAP_GAP := 3.0
+const EXHAUSTED := 20.0
+## People set off COMMUTE hours before a shift. Anyone whose shift would leave less
+## than MORNING hours between WAKE and setting off runs their whole day (bed, waking,
+## breakfast) that much earlier on work days.
+const COMMUTE := 0.5
+const MORNING := 2.0
+## Mealtimes, [from, to]. Left to themselves adults cook one meal in each while they
+## are home, unless fuller than FULL. Children, who cannot cook, and anyone with less
+## than MEAL_TIME hours before setting off for work have a snack as their meal instead.
+## Between meals people only snack, and only once hunger is under PECKISH. Under
+## RAVENOUS the clock stops mattering.
+const MEALS := [[6.0, 9.0], [12.0, 14.5], [18.0, 21.0]]
+const MEAL_TIME := 1.25
+const FULL := 80.0
+const PECKISH := 50.0
+const RAVENOUS := 20.0
 const MOOD_W := {
 	"hunger": 1.5, "energy": 1.5, "hygiene": 1.0, "bladder": 1.2,
 	"fun": 1.0, "social": 1.0, "comfort": 0.8, "room": 0.6,
@@ -37,7 +67,7 @@ const WALL_PRICE := 15
 const DOOR_PRICE := 40
 const WINDOW_PRICE := 30
 
-const EAT := {"id": "eat", "label": "Eat", "needs": {"hunger": 140.0}, "dur": 0.5, "seat": true, "bubble": "Yum", "snd": "munch"}
+const EAT := {"id": "eat", "label": "Eat", "needs": {"hunger": 130.0}, "dur": 0.35, "seat": true, "bubble": "Yum", "snd": "munch"}
 
 ## size = footprint at rotation 0 (x, depth). slots = local positions people occupy.
 ## acts = interactions. needs are points per game hour while doing.
@@ -45,13 +75,13 @@ const OBJECTS := {
 	"bed_single": {
 		"name": "Single bed", "price": 300, "cat": "Bedroom", "size": Vector2i(1, 2), "room": 1.0, "h": 0.6,
 		"slots": [Vector3(0, 0.5, 0)],
-		"acts": [{"id": "sleep", "label": "Sleep", "needs": {"energy": 11.0, "comfort": 20.0}, "until": "energy",
+		"acts": [{"id": "sleep", "label": "Sleep", "needs": {"energy": 9.0, "comfort": 20.0}, "until": "energy",
 			"dur": 12.0, "pose": "lie", "sleep": true, "busy": true, "bubble": "Zzz"}],
 	},
 	"bed_double": {
 		"name": "Double bed", "price": 650, "cat": "Bedroom", "size": Vector2i(2, 2), "room": 2.0, "h": 0.6,
 		"slots": [Vector3(-0.5, 0.5, 0), Vector3(0.5, 0.5, 0)],
-		"acts": [{"id": "sleep", "label": "Sleep", "needs": {"energy": 13.0, "comfort": 30.0}, "until": "energy",
+		"acts": [{"id": "sleep", "label": "Sleep", "needs": {"energy": 11.0, "comfort": 30.0}, "until": "energy",
 			"dur": 12.0, "pose": "lie", "sleep": true, "busy": true, "bubble": "Zzz"}],
 	},
 	"sofa": {
@@ -124,13 +154,13 @@ const OBJECTS := {
 		"name": "Refrigerator", "price": 600, "cat": "Kitchen", "size": Vector2i(1, 1), "h": 1.8, "cap": 2,
 		"acts": [
 			{"id": "snack", "label": "Have a snack ($5)", "needs": {"hunger": 120.0}, "dur": 0.25, "cost": 5, "bubble": "Yum"},
-			{"id": "meal", "label": "Cook a meal ($15)", "dur": 0.15, "cost": 15, "req": "stove",
-				"gain": {"hunger": 70.0}, "adult": true, "then": {"kind": "stove", "id": "cook"}},
+			{"id": "meal", "label": "Cook a meal ($6)", "dur": 0.15, "cost": 6, "req": "stove",
+				"gain": {"hunger": 45.0}, "adult": true, "then": {"kind": "stove", "id": "cook"}},
 		],
 	},
 	"stove": {
 		"name": "Stove", "price": 400, "cat": "Kitchen", "size": Vector2i(1, 1), "h": 0.9, "cap": 2,
-		"acts": [{"id": "cook", "label": "Cook", "skill": {"cooking": 0.3}, "dur": 0.6, "hidden": true, "snd": "sizzle", "then": {"kind": "self", "id": "eat"}}],
+		"acts": [{"id": "cook", "label": "Cook", "skill": {"cooking": 0.3}, "dur": 0.45, "hidden": true, "snd": "sizzle", "then": {"kind": "self", "id": "eat"}}],
 	},
 	"sink": {
 		"name": "Sink", "price": 250, "cat": "Bathroom", "size": Vector2i(1, 1), "h": 0.9,

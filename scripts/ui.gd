@@ -21,7 +21,7 @@ const CONTROLS := [
 	["Right-click or Esc", "Put the current tool away"], ["W A S D", "Move the camera"],
 	["Q / E, middle-drag", "Turn the camera"], ["Mouse wheel", "Zoom"], ["Tab", "Next household member"],
 	["Space, 1 2 3", "Pause and speed"], ["R", "Rotate furniture"], ["F", "Walls up or down"],
-	["F5 / F9", "Save / load"], ["M", "Sound on or off"], ["H", "Show or hide this list"],
+	["F5 / F9", "Save / load"], ["H", "Show or hide this list"],
 ]
 
 var game
@@ -168,7 +168,10 @@ func _ready() -> void:
 	hg.add_theme_constant_override("h_separation", 24)
 	hg.add_theme_constant_override("v_separation", 6)
 	hv.add_child(hg)
-	for row in CONTROLS:
+	var rows := CONTROLS.duplicate()
+	if Sfx.ENABLED:
+		rows.insert(rows.size() - 1, ["M", "Sound on or off"])
+	for row in rows:
 		_label(hg, row[0], 14)
 		_label(hg, row[1], 14).add_theme_color_override("font_color", MUTED)
 	_btn(hv, "Close", toggle_help).size_flags_horizontal = Control.SIZE_SHRINK_END
@@ -386,8 +389,9 @@ func _open_options() -> void:
 	opt_menu.set_item_checked(0, game.world.walls_up)
 	opt_menu.add_check_item("Free will", 1)
 	opt_menu.set_item_checked(1, game.free_will)
-	opt_menu.add_check_item("Sound", 2)
-	opt_menu.set_item_checked(2, not game.sfx.muted)
+	if Sfx.ENABLED:
+		opt_menu.add_check_item("Sound", 2)
+		opt_menu.set_item_checked(opt_menu.get_item_index(2), not game.sfx.muted)
 	opt_menu.add_separator()
 	opt_menu.add_item("Save", 3)
 	opt_menu.add_item("Load last save", 4)
