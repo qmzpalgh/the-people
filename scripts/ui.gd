@@ -38,11 +38,20 @@ var alerts: HFlowContainer
 var queue_box: HFlowContainer
 var needs_box: GridContainer
 var bars := {}
-var info_l: Label
-var needs_btn: Button
-var info_btn: Button
-var needs_open := false
-var info_open := false
+var stage_box: HBoxContainer
+var work_box: VBoxContainer
+var work_l: Array = []  # title, detail, next step, needs
+var perf_row: HBoxContainer
+var perf_bar: ProgressBar
+var skills_box: GridContainer
+var skill_rows := {}  # skill -> [name, career dot, level, bar]
+var traits_box: GridContainer
+var trait_marks := {}  # trait -> marker
+var people_scroll: ScrollContainer
+var people_list: VBoxContainer
+var people_rows: Array = []  # [person, fill, word]
+var tab_btns := {}
+var card_tab := ""
 var side: PanelContainer
 var side_title: Label
 var cat_box: HFlowContainer
@@ -104,11 +113,15 @@ func _ready() -> void:
 	var cv := VBoxContainer.new()
 	cv.add_theme_constant_override("separation", 6)
 	card.add_child(cv)
-	var head := _hbox(cv, 2)
+	# The stage chip drops under the name when both don't fit on one line.
+	var head := HFlowContainer.new()
+	head.add_theme_constant_override("h_separation", 8)
+	head.add_theme_constant_override("v_separation", 2)
+	cv.add_child(head)
 	name_l = _label(head, "", 17)
 	name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	needs_btn = _seg(head, "Needs", func(): needs_open = not needs_open)
-	info_btn = _seg(head, "About", func(): info_open = not info_open)
+	stage_box = _hbox(head, 0)
+	stage_box.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	act_l = _label(cv, "", 13)
 	act_l.add_theme_color_override("font_color", MUTED)
 	mood_bar = _bar(cv, 0, 6)
@@ -117,6 +130,9 @@ func _ready() -> void:
 	cv.add_child(alerts)
 	queue_box = HFlowContainer.new()
 	cv.add_child(queue_box)
+	var tabs := _hbox(cv, 2)
+	for t in CARD_TABS:
+		tab_btns[t] = _tab(tabs, t)
 	needs_box = GridContainer.new()
 	needs_box.columns = 4
 	needs_box.add_theme_constant_override("h_separation", 8)
@@ -126,7 +142,10 @@ func _ready() -> void:
 		var l := _label(needs_box, Defs.NEED_NAMES[n], 13)
 		l.custom_minimum_size.x = 58
 		bars[n] = _bar(needs_box, 84, 8)
-	info_l = _label(cv, "", 13)
+	_build_work(cv)
+	_build_skills(cv)
+	_build_traits(cv)
+	_build_people(cv)
 
 	# Catalogue and build tools.
 	side = PanelContainer.new()
@@ -437,8 +456,16 @@ func show_game_over() -> void:
 
 
 func debug_open(what: String) -> void:
-	needs_open = what.contains("needs")
-	info_open = what.contains("info")
+	card_tab = "needs" if what.contains("needs") else ""
+	for t in CARD_TABS:
+		if what.contains("tab:" + t):
+			card_tab = t
+	# pick:<n> selects the n-th household member, counting from 1.
+	var pick := what.find("pick:")
+	if pick >= 0:
+		var n := what.substr(pick + 5, 1).to_int() - 1
+		if n >= 0 and n < game.people.size():
+			game.select(game.people[n])
 	if what.contains("help"):
 		toggle_help()
 	if what.contains("floors"):
@@ -615,16 +642,22 @@ func _refresh_card() -> void:
 	if s == null or not is_instance_valid(s):
 		return
 	name_l.text = s.pname
+	if _changed("stage", _stage_words(s)):
+		_clear(stage_box)
+		_chip(stage_box, _sig["stage"], MUTED)
 	act_l.text = s.activity()
 	_set_bar(mood_bar, s.mood())
-	needs_btn.set_pressed_no_signal(needs_open)
-	info_btn.set_pressed_no_signal(info_open)
-	needs_box.visible = needs_open
-	info_l.visible = info_open
+	for t in tab_btns:
+		tab_btns[t].set_pressed_no_signal(t == card_tab)
+	needs_box.visible = card_tab == "needs"
+	work_box.visible = card_tab == "work"
+	skills_box.visible = card_tab == "skills"
+	traits_box.visible = card_tab == "traits"
+	people_scroll.visible = card_tab == "people"
 
 	# Only the needs that want attention surface on their own.
 	var low := []
-	if not needs_open and not s.away:
+	if card_tab != "needs" and not s.away:
 		for n in Defs.NEEDS:
 			if s.needs[n] < 30.0:
 				low.append(n)
@@ -649,41 +682,344 @@ func _refresh_card() -> void:
 			b.add_theme_stylebox_override("normal", _sb(Color(INK, 0.07), 9, 8, 2))
 			b.tooltip_text = "Cancel"
 
-	if needs_open:
+	if card_tab == "needs":
 		for n in Defs.NEEDS:
 			_set_bar(bars[n], s.needs[n])
-	if info_open:
-		var lines := [s.stage_text()]
-		if s.job != null:
-			var c: Dictionary = Defs.CAREERS[s.job.career]
-			lines.append("%s, $%d a day, %d:00 to %d:00 on weekdays" % [c["titles"][s.job.level], c["pay"][s.job.level],
-				int(c["start"]), int(c["start"] + c["hours"])])
-			lines.append("Work performance %d%%" % int(clampf(s.job.perf, 0, 100)))
-		elif s.stage() == "child":
-			lines.append("At school 8:00 to 14:00 on weekdays")
-		elif s.stage() == "elder":
-			lines.append("Retired, $%d a day pension" % Defs.PENSION)
-		else:
-			lines.append("No job yet. A computer can find one.")
-		var sk := []
-		for k in Defs.SKILLS:
-			if s.skills[k] >= 1.0:
-				sk.append("%s %d" % [k.capitalize(), int(s.skills[k])])
-		if not sk.is_empty():
-			lines.append("Skills: " + ", ".join(sk))
-		var tr := []
-		for t in Defs.TRAITS:
-			if s.traits[t] >= 7:
-				tr.append(t.capitalize())
-			elif s.traits[t] <= 3:
-				tr.append("Not " + t)
-		if not tr.is_empty():
-			lines.append(", ".join(tr))
-		var rl := []
-		for p in game.everyone():
-			var r: float = game.get_rel(s, p)
-			if p != s and (p.resident or absf(r) >= 5.0):
-				rl.append("%s %+d" % [p.first(), int(r)])
-		if not rl.is_empty():
-			lines.append("Knows " + ", ".join(rl))
-		info_l.text = "\n".join(lines)
+	if work_box.visible:
+		_refresh_work(s)
+	if skills_box.visible:
+		_refresh_skills(s)
+	if traits_box.visible:
+		_refresh_traits(s)
+	if people_scroll.visible:
+		_refresh_people(s)
+
+
+# ---------------------------------------------------------------- person card tabs
+
+## One block of the card is open at a time, or none. "" means the card is closed.
+const CARD_TABS := ["needs", "work", "skills", "traits", "people"]
+
+
+func _tab(parent: Node, t: String) -> Button:
+	var b := _seg(parent, t.capitalize(), _pick_card_tab.bind(t))
+	b.add_theme_font_size_override("font_size", 13)
+	# Slimmer than a standard button, so all five fit the card at its narrowest.
+	b.add_theme_stylebox_override("normal", _sb(Color(0, 0, 0, 0), 8, 8))
+	b.add_theme_stylebox_override("hover", _sb(Color(INK, 0.08), 8, 8))
+	for st in ["pressed", "hover_pressed"]:
+		b.add_theme_stylebox_override(st, _sb(INK, 8, 8))
+	return b
+
+
+func _pick_card_tab(t: String) -> void:
+	card_tab = "" if card_tab == t else t
+
+
+## The life stage and age, for the chip beside the name.
+func _stage_words(s: Person) -> String:
+	match s.stage():
+		"child":
+			var left := ceili(Defs.CHILD_DAYS - s.age)
+			return "Child, grows up in %d %s" % [left, "day" if left == 1 else "days"]
+		"elder":
+			return "Elder, day %d" % int(s.age)
+	return "Adult, day %d" % int(s.age)
+
+
+# ---------------------------------------------------------------- work tab
+
+func _build_work(parent: Node) -> void:
+	work_box = VBoxContainer.new()
+	work_box.add_theme_constant_override("separation", 4)
+	parent.add_child(work_box)
+	work_l.append(_label(work_box, "", 14))
+	work_l.append(_label(work_box, "", 13))
+	work_l[1].add_theme_color_override("font_color", MUTED)
+	perf_row = _hbox(work_box, 8)
+	_label(perf_row, "Performance", 13)
+	perf_bar = _bar(perf_row, 0, 8)
+	perf_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	perf_bar.tooltip_text = "Full performance and enough skill earn a promotion."
+	work_l.append(_label(work_box, "", 13))
+	work_l.append(_label(work_box, "", 13))
+	work_l[3].add_theme_color_override("font_color", MUTED)
+
+
+## Title, detail, next step and what it needs, for the work tab.
+func _work_lines(s: Person) -> Array:
+	if s.job == null:
+		if s.stage() == "child":
+			return ["At school", "%d:00 to %d:00 on weekdays" % [int(Defs.SCHOOL["start"]), int(Defs.SCHOOL["start"] + Defs.SCHOOL["hours"])],
+				"", "Each school day adds a little Logic."]
+		if s.stage() == "elder":
+			return ["Retired", "A pension of $%d a day." % Defs.PENSION, "", ""]
+		return ["No job yet", "A computer can find one.", "", ""]
+	var c: Dictionary = Defs.CAREERS[s.job.career]
+	var lv: int = s.job.level
+	var lines := ["%s, %s" % [c["titles"][lv], c["name"]],
+		"$%d a day, %d:00 to %d:00 on weekdays" % [c["pay"][lv], int(c["start"]), int(c["start"] + c["hours"])]]
+	if lv >= 4:
+		return lines + ["Top of the career. There is nothing higher.", ""]
+	lines.append("Next: " + c["titles"][lv + 1])
+	var need := (lv + 1) * 2
+	var has: float = s.skills[c["skill"]]
+	var skill := "%s %d" % [c["skill"].capitalize(), need]
+	var full: bool = s.job.perf >= 100.0
+	if has < need and full:
+		lines.append("Needs %s (has %d)" % [skill, int(has)])
+	elif has < need:
+		lines.append("Needs %s and full performance" % skill)
+	elif not full:
+		lines.append("Needs full performance")
+	else:
+		lines.append("Due after the next workday")
+	return lines
+
+
+func _refresh_work(s: Person) -> void:
+	var lines := _work_lines(s)
+	for i in work_l.size():
+		work_l[i].text = lines[i]
+		work_l[i].visible = lines[i] != ""
+	perf_row.visible = s.job != null
+	if s.job != null:
+		perf_bar.value = clampf(s.job.perf, 0.0, 100.0)
+
+
+# ---------------------------------------------------------------- skills tab
+
+func _build_skills(parent: Node) -> void:
+	skills_box = GridContainer.new()
+	skills_box.columns = 3
+	skills_box.add_theme_constant_override("h_separation", 8)
+	skills_box.add_theme_constant_override("v_separation", 5)
+	parent.add_child(skills_box)
+	for k in Defs.SKILLS:
+		var cell := _hbox(skills_box, 5)
+		cell.custom_minimum_size.x = 92
+		var nm := _label(cell, k.capitalize(), 13)
+		var dot := Panel.new()
+		dot.add_theme_stylebox_override("panel", _sb(GOLD, 3, 0, 0))
+		dot.custom_minimum_size = Vector2(6, 6)
+		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		cell.add_child(dot)
+		var lvl := _label(skills_box, "", 13)
+		lvl.custom_minimum_size.x = 18
+		lvl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		var bar := _bar(skills_box, 0, 8)
+		bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		skill_rows[k] = [nm, dot, lvl, bar]
+
+
+## The bar is progress through the current level; at 10 the skill is full.
+func _refresh_skills(s: Person) -> void:
+	var marked := ""
+	var why := ""
+	if s.job != null:
+		marked = Defs.CAREERS[s.job.career]["skill"]
+		why = "Career skill: %s" % Defs.CAREERS[s.job.career]["name"]
+	elif s.stage() == "child":
+		marked = "logic"
+		why = "Practised at school"
+	for k in skill_rows:
+		var v: float = s.skills[k]
+		var row: Array = skill_rows[k]
+		row[1].visible = k == marked
+		row[1].tooltip_text = why
+		row[2].text = str(int(v))
+		row[3].value = 100.0 if v >= 10.0 else fmod(v, 1.0) * 100.0
+		row[3].tooltip_text = "Top level" if v >= 10.0 else "%d%% of the way to level %d" % [int(fmod(v, 1.0) * 100.0), int(v) + 1]
+		# Never practised: greyed, not hidden.
+		var a := 0.45 if v <= 0.0 else 1.0
+		row[0].modulate.a = a
+		row[2].modulate.a = a
+
+
+# ---------------------------------------------------------------- traits tab
+
+## The word at each end of a trait's 1 to 9 scale: low first, high second.
+const TRAIT_ENDS := {
+	"neat": ["Messy", "Neat"], "outgoing": ["Shy", "Outgoing"], "active": ["Laid-back", "Active"],
+	"playful": ["Serious", "Playful"], "nice": ["Grumpy", "Nice"],
+}
+const TRAIT_W := 110.0  # every track is the same width, so markers compare down the column
+
+
+func _build_traits(parent: Node) -> void:
+	traits_box = GridContainer.new()
+	traits_box.columns = 3
+	traits_box.add_theme_constant_override("h_separation", 10)
+	traits_box.add_theme_constant_override("v_separation", 5)
+	parent.add_child(traits_box)
+	for t in Defs.TRAITS:
+		var lo := _label(traits_box, TRAIT_ENDS[t][0], 13)
+		lo.custom_minimum_size.x = 70
+		lo.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		var track := Control.new()
+		track.custom_minimum_size = Vector2(TRAIT_W, 12)
+		track.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		traits_box.add_child(track)
+		var line := Panel.new()
+		line.add_theme_stylebox_override("panel", _sb(Color(INK, 0.1), 2, 0, 0))
+		line.position = Vector2(0, 4)
+		line.size = Vector2(TRAIT_W, 4)
+		line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		track.add_child(line)
+		var mid := ColorRect.new()
+		mid.color = Color(INK, 0.22)
+		mid.position = Vector2(TRAIT_W / 2.0 - 0.5, 1)
+		mid.size = Vector2(1, 10)
+		mid.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		track.add_child(mid)
+		var mark := Panel.new()
+		mark.add_theme_stylebox_override("panel", _sb(INK, 5, 0, 0))
+		mark.size = Vector2(10, 10)
+		mark.position.y = 1
+		mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		track.add_child(mark)
+		trait_marks[t] = mark
+		_label(traits_box, TRAIT_ENDS[t][1], 13)
+
+
+## The marker's centre sits at (value - 1) / 8 along the track: 1 far left, 5 centre, 9 far right.
+func _refresh_traits(s: Person) -> void:
+	for t in trait_marks:
+		var v: float = clampf(s.traits[t], 1, 9)
+		trait_marks[t].position.x = (v - 1.0) / 8.0 * TRAIT_W - 5.0
+		trait_marks[t].get_parent().tooltip_text = "%s %d of 9" % [t.capitalize(), int(v)]
+
+
+# ---------------------------------------------------------------- people tab
+
+const REL_W := 52.0  # width of every relationship track
+const ROW_H := 24.0
+const PEOPLE_ROWS := 6  # rows shown before the list scrolls
+
+
+func _build_people(parent: Node) -> void:
+	people_scroll = ScrollContainer.new()
+	people_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	parent.add_child(people_scroll)
+	# A slim, quiet scroll bar instead of the default grey one.
+	var vb := people_scroll.get_v_scroll_bar()
+	vb.custom_minimum_size.x = 4
+	for st in ["scroll", "scroll_focus"]:
+		vb.add_theme_stylebox_override(st, _sb(Color(INK, 0.05), 2, 0, 0))
+	vb.add_theme_stylebox_override("grabber", _sb(Color(INK, 0.22), 2, 0, 0))
+	vb.add_theme_stylebox_override("grabber_highlight", _sb(Color(INK, 0.38), 2, 0, 0))
+	vb.add_theme_stylebox_override("grabber_pressed", _sb(Color(INK, 0.5), 2, 0, 0))
+	# The scroll bar is drawn over the list's right edge, so keep the words clear of it.
+	var pad := MarginContainer.new()
+	pad.add_theme_constant_override("margin_right", 6)
+	pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	people_scroll.add_child(pad)
+	people_list = VBoxContainer.new()
+	people_list.add_theme_constant_override("separation", 0)
+	pad.add_child(people_list)
+
+
+## Everyone the selected person knows: the rest of the household always, anyone else
+## once the relationship is at least 5 either way. Household first, each group warmest first.
+func _known(s: Person) -> Array:
+	var home := []
+	var others := []
+	for p in game.everyone():
+		if p == s:
+			continue
+		var r: float = game.get_rel(s, p)
+		if p.resident:
+			home.append(p)
+		elif absf(r) >= 5.0:
+			others.append(p)
+	var warmest := func(a, b): return game.get_rel(s, a) > game.get_rel(s, b)
+	home.sort_custom(warmest)
+	others.sort_custom(warmest)
+	return [home, others]
+
+
+func _refresh_people(s: Person) -> void:
+	var groups := _known(s)
+	var sig := "%d:" % s.pid
+	for g in groups:
+		sig += ",".join(g.map(func(p): return str(p.pid))) + ";"
+	if _changed("people", sig):
+		_clear(people_list)
+		people_rows.clear()
+		var items := 0
+		if groups[0].is_empty() and groups[1].is_empty():
+			_people_note("Nobody yet.")
+			items += 1
+		for g in 2:
+			if g == 1 and not groups[1].is_empty() and not groups[0].is_empty():
+				_people_note("Neighbours")
+				items += 1
+			for p in groups[g]:
+				_people_row(p)
+				items += 1
+		people_scroll.custom_minimum_size.y = mini(items, PEOPLE_ROWS) * ROW_H
+		people_scroll.scroll_vertical = 0
+	for row in people_rows:
+		var r: float = clampf(game.get_rel(s, row[0]), -100.0, 100.0)
+		var w := absf(r) / 100.0 * REL_W / 2.0
+		row[1].color = GOOD if r >= 0.0 else WARN
+		row[1].position.x = REL_W / 2.0 if r >= 0.0 else REL_W / 2.0 - w
+		row[1].size.x = w
+		row[2].text = game._rel_word(r)
+		row[1].get_parent().tooltip_text = "%+d" % int(r)
+
+
+func _people_note(text: String) -> void:
+	var l := _label(people_list, text, 12)
+	l.add_theme_color_override("font_color", MUTED)
+	l.custom_minimum_size.y = ROW_H
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+
+
+func _people_row(p: Person) -> void:
+	var row := _hbox(people_list, 5)
+	row.custom_minimum_size.y = ROW_H
+	# A small version of the household chips: residents filled, visitors outlined.
+	var chip := PanelContainer.new()
+	var sb := _sb(p.shirt if p.resident else PAPER, 9, 0, 0)
+	if not p.resident:
+		sb.set_border_width_all(2)
+		sb.border_color = p.shirt
+	chip.add_theme_stylebox_override("panel", sb)
+	chip.custom_minimum_size = Vector2(18, 18)
+	chip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(chip)
+	var ini := _label(chip, p.first().substr(0, 1), 11)
+	ini.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	ini.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	ini.add_theme_color_override("font_color", Color.WHITE if p.resident else INK)
+	var nm := _label(row, p.pname, 13)
+	nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	nm.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	# A track centred on zero, like the trait scales: green to the right, red to the left.
+	var track := Control.new()
+	track.custom_minimum_size = Vector2(REL_W, 12)
+	track.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(track)
+	var line := Panel.new()
+	line.add_theme_stylebox_override("panel", _sb(Color(INK, 0.1), 2, 0, 0))
+	line.position = Vector2(0, 4)
+	line.size = Vector2(REL_W, 4)
+	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	track.add_child(line)
+	var fill := ColorRect.new()
+	fill.position = Vector2(REL_W / 2.0, 4)
+	fill.size = Vector2(0, 4)
+	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	track.add_child(fill)
+	var mid := ColorRect.new()
+	mid.color = Color(INK, 0.3)
+	mid.position = Vector2(REL_W / 2.0 - 0.5, 1)
+	mid.size = Vector2(1, 10)
+	mid.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	track.add_child(mid)
+	var word := _label(row, "", 12)
+	word.add_theme_color_override("font_color", MUTED)
+	word.custom_minimum_size.x = 78
+	word.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	people_rows.append([p, fill, word])
