@@ -52,6 +52,8 @@ var item_btns := {}
 var tool_btns := {}
 var cat := "Seating"
 var build_tab := "Walls"
+## Side of a catalogue row's thumbnail, in pixels.
+const PIC := 40
 var thumbs: Thumbs
 var toasts: VBoxContainer
 var menu: PopupMenu
@@ -447,6 +449,11 @@ func debug_open(what: String) -> void:
 	if what.contains("floors"):
 		build_tab = "Floors"
 		build_side()
+	if _ui_word(what, "cat:") in Defs.CATS:
+		cat = _ui_word(what, "cat:")
+		build_side()
+	if Defs.OBJECTS.has(_ui_word(what, "pick:")):
+		game.set_buy(_ui_word(what, "pick:"))
 	if what.contains("options"):
 		_open_options.call_deferred()
 
@@ -475,7 +482,7 @@ func build_side() -> void:
 			for k in Defs.OBJECTS:
 				var d: Dictionary = Defs.OBJECTS[k]
 				if d["cat"] == cat:
-					item_btns[k] = _row(d["name"], "$%d" % d["price"], game.set_buy.bind(k))
+					item_btns[k] = _row(d["name"], "$%d" % d["price"], game.set_buy.bind(k), null, thumbs.object(k))
 	elif game.mode == "build":
 		side_title.text = "Build"
 		for c in ["Walls", "Floors"]:
@@ -493,9 +500,11 @@ func build_side() -> void:
 			tool_btns["floor:0"] = _row("Remove floor", "", _pick_tool.bind("floor:0"))
 
 
-func _row(text: String, right: String, cb: Callable, swatch = null) -> Button:
+func _row(text: String, right: String, cb: Callable, swatch = null, pic: Texture2D = null) -> Button:
 	var b := _seg(list_box, text, cb)
 	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	if pic != null:
+		_pic(b, pic)
 	if swatch != null:
 		var sw := ColorRect.new()
 		sw.color = swatch
@@ -520,6 +529,31 @@ func _row(text: String, right: String, cb: Callable, swatch = null) -> Button:
 		l.offset_top = -10
 		l.offset_bottom = 10
 	return b
+
+
+## Puts a thumbnail left of a row's name. It is drawn at a fixed size, so the row keeps its
+## height while the picture is still blank, and greys with the row (see refresh).
+func _pic(b: Button, pic: Texture2D) -> void:
+	b.icon = pic
+	b.add_theme_constant_override("icon_max_width", PIC)
+	b.add_theme_constant_override("h_separation", 8)
+	b.add_theme_stylebox_override("normal", _sb(Color(0, 0, 0, 0), 8, 6, 2))
+	b.add_theme_stylebox_override("disabled", _sb(Color(0, 0, 0, 0), 8, 6, 2))
+	b.add_theme_stylebox_override("hover", _sb(Color(INK, 0.08), 8, 6, 2))
+	b.add_theme_stylebox_override("pressed", _sb(INK, 8, 6, 2))
+	b.add_theme_stylebox_override("hover_pressed", _sb(INK, 8, 6, 2))
+	for c in ["icon_normal_color", "icon_hover_color", "icon_pressed_color", "icon_hover_pressed_color"]:
+		b.add_theme_color_override(c, Color.WHITE)
+	b.add_theme_color_override("icon_disabled_color", Color(1, 1, 1, 0.5))
+	b.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+
+
+## The text after `key` in a TP_UI string, up to the next comma or space ("cat:Fun" gives "Fun").
+func _ui_word(what: String, key: String) -> String:
+	var i := what.find(key)
+	if i < 0:
+		return ""
+	return what.substr(i + key.length()).get_slice(",", 0).get_slice(" ", 0)
 
 
 func _pick_cat(c: String) -> void:
@@ -578,6 +612,9 @@ func refresh() -> void:
 		for k in item_btns:
 			item_btns[k].set_pressed_no_signal(game.buy_kind == k)
 			item_btns[k].disabled = Defs.OBJECTS[k]["price"] > game.money
+			var gm: Material = Thumbs.greyed() if item_btns[k].disabled else null
+			if item_btns[k].material != gm:
+				item_btns[k].material = gm
 		for k in tool_btns:
 			tool_btns[k].set_pressed_no_signal(game.tool == k)
 		hint_l.text = _hint()

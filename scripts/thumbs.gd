@@ -18,6 +18,8 @@ const PITCH := 0.5
 ## Frame width as a share of the model's, so nothing touches the edge.
 const MARGIN := 1.08
 
+static var _grey: ShaderMaterial
+
 var _cache := {}
 var _queue: Array = []  # [key, build] waiting their turn
 var _busy := ""  # key being drawn this frame
@@ -65,6 +67,21 @@ func request(key: String, build: Callable) -> ImageTexture:
 		_queue.append([key, build])
 		set_process(true)
 	return tex
+
+
+## Material for a control whose picture should look out of reach: drains its colour.
+static func greyed() -> ShaderMaterial:
+	if _grey == null:
+		var sh := Shader.new()
+		sh.code = """shader_type canvas_item;
+void fragment() {
+	float g = dot(COLOR.rgb, vec3(0.3, 0.59, 0.11));
+	COLOR.rgb = mix(COLOR.rgb, vec3(g), 0.85);
+}
+"""
+		_grey = ShaderMaterial.new()
+		_grey.shader = sh
+	return _grey
 
 
 func _can_draw() -> bool:
