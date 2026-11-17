@@ -7,12 +7,12 @@ const GROUPS := ["worker", "jobless", "child", "elder"]
 
 var game
 var acc := {}      # group -> {hours, mood, needs: {need: [sum, low, zero]}, acts: {label: hours}, night_awake, night}
-var sleeps := []   # [group, kind, start_hour, hours, energy_before, energy_after]
+var sleeps := []   # [group, kind, start_hour, hours, energy_before, energy_after, finished]
 var returns := []  # [group, hour, needs, next_action]
 var incidents := {}
 var track := {}    # pid -> per-person state for the current run
 var deaths := 0
-var meals := []    # [group, hour, hunger_after]
+var meals := []    # [group, hour, hunger_after, cooked]
 var runs := 0
 
 
@@ -70,18 +70,24 @@ func step(dh: float) -> void:
 			a["night"] += dh
 			if not asleep:
 				a["night_awake"] += dh
-		var t: Dictionary = track.get(p.pid, {"sleep": null, "work": false, "back": null, "stats": {}, "meal": p.meal_t})
+		var t: Dictionary = track.get(p.pid, {"sleep": null, "work": false, "back": null, "stats": {},
+			"meal": p.meal_t, "eaten": p.stats.get("Eat", 0)})
 		if p.meal_t != t["meal"]:
+			# A mealtime snack moves meal_t too; only a finished "Eat" is a cooked meal.
+			meals.append([g, h, p.needs.hunger, p.stats.get("Eat", 0) > t["eaten"]])
 			t["meal"] = p.meal_t
-			meals.append([g, h, p.needs.hunger])
+			t["eaten"] = p.stats.get("Eat", 0)
 		if asleep and t["sleep"] == null:
-			t["sleep"] = [g, lab, h, 0.0, p.needs.energy, 0.0]
+			# Counted from the moment it starts, so sleep still running at the end of
+			# the run is not lost; length and energy come from finished sessions only.
+			t["sleep"] = [g, lab, h, 0.0, p.needs.energy, 0.0, false]
+			sleeps.append(t["sleep"])
 		elif t["sleep"] != null:
 			if asleep:
 				t["sleep"][3] += dh
 			else:
 				t["sleep"][5] = p.needs.energy
-				sleeps.append(t["sleep"])
+				t["sleep"][6] = true
 				t["sleep"] = null
 		if t["work"] and not at_work:
 			t["back"] = [g, h, p.needs.duplicate(), ""]
@@ -162,18 +168,26 @@ func report() -> void:
 	var edges := [6.0, 12.0, 17.0, 20.0, 22.0, 0.0, 3.0]
 	for g in GROUPS:
 		for kind in ["Sleep", "Nap", "Passed out"]:
-			var ss := sleeps.filter(func(s): return s[0] == g and s[1] == kind and s[3] >= 0.25)
+			var ss := sleeps.filter(func(s): return s[0] == g and s[1] == kind and (s[3] >= 0.25 or not s[6]))
 			if ss.is_empty():
 				continue
-			print("  %-8s %-10s %4.2f/day %s | %.1fh long, energy %2.0f -> %3.0f" % [g, kind,
-				ss.size() / (acc[g]["hours"] / 24.0), _hist(ss.map(func(s): return s[2]), edges),
-				_mean(ss.map(func(s): return s[3])), _mean(ss.map(func(s): return s[4])), _mean(ss.map(func(s): return s[5]))])
-	print("\nMEALS: cooked meals by hour of day")
+			var fin := ss.filter(func(s): return s[6])
+			var line := "  %-8s %-10s %4.2f/day %s | " % [g, kind, ss.size() / (acc[g]["hours"] / 24.0),
+				_hist(ss.map(func(s): return s[2]), edges)]
+			if fin.is_empty():
+				line += "none finished"
+			else:
+				line += "%.1fh long, energy %2.0f -> %3.0f" % [_mean(fin.map(func(s): return s[3])),
+					_mean(fin.map(func(s): return s[4])), _mean(fin.map(func(s): return s[5]))]
+			print(line)
+	print("\nMEALS: by hour of day")
 	for g in GROUPS:
-		var ms := meals.filter(func(m): return m[0] == g)
-		if not ms.is_empty():
-			print("  %-8s %4.2f/day %s | hunger after %2.0f" % [g, ms.size() / (acc[g]["hours"] / 24.0),
-				_hist(ms.map(func(m): return m[1]), [4.0, 10.0, 15.0, 22.0]), _mean(ms.map(func(m): return m[2]))])
+		for cooked in [true, false]:
+			var ms := meals.filter(func(m): return m[0] == g and m[3] == cooked)
+			if not ms.is_empty():
+				print("  %-8s %-13s %4.2f/day %s | hunger after %2.0f" % [g, "cooked" if cooked else "snack as meal",
+					ms.size() / (acc[g]["hours"] / 24.0), _hist(ms.map(func(m): return m[1]), [4.0, 10.0, 15.0, 22.0]),
+					_mean(ms.map(func(m): return m[2]))])
 	print("\nHOME FROM WORK OR SCHOOL: needs on arrival, then the first thing they do")
 	for g in GROUPS:
 		var rs := returns.filter(func(r): return r[0] == g)

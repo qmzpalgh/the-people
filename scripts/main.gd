@@ -79,7 +79,8 @@ func _ready() -> void:
 	if OS.has_environment("TP_SAVE"):
 		save_path = OS.get_environment("TP_SAVE")
 	var testing := OS.has_environment("TP_TEST") or OS.has_environment("TP_SHOT")
-	var fresh := skip_load or (testing and not OS.has_environment("TP_SAVE")) or OS.has_environment("TP_FRESH")
+	# Only the first of several pooled test runs may continue a save; the rest start new.
+	var fresh := skip_load or (testing and not OS.has_environment("TP_SAVE")) or OS.has_environment("TP_FRESH") or _run > 0
 	skip_load = false
 	if testing and not OS.has_environment("TP_SAVE"):
 		save_path = "user://tp_test_save.json"
@@ -738,7 +739,7 @@ func pick_person(mpos: Vector2):
 		if not p.visible:
 			continue
 		for hy in [0.5, 1.0, 1.5]:
-			var v: Vector3 = p.position + Vector3(0, hy * p.h_scale, 0) - o
+			var v: Vector3 = p.shown_pos() + Vector3(0, hy * p.h_scale, 0) - o
 			var t := v.dot(d)
 			if (v - d * t).length() < 0.4 and t < bt:
 				bt = t
@@ -1043,7 +1044,7 @@ func _report() -> void:
 				jb = "%s L%d" % [Defs.CAREERS[p.job.career]["name"], p.job.level]
 			print("      job %s, doing %s, actions %s" % [jb, p.activity(), p.stats])
 	print("   memorials: ", households.values().map(func(h): return h.world.objects.filter(func(o): return o.kind == "grave").map(func(o): return o.label)))
-	if OS.has_environment("TP_SAVE"):
+	if OS.has_environment("TP_SAVE") and _runs == 1:
 		save_game(true)
 		print("   saved to ", save_path)
 

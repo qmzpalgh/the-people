@@ -377,7 +377,7 @@ func _wants_sleep(it: Dictionary) -> bool:
 		return true
 	if it["id"] != "nap":
 		return bedtime() and needs.energy < Defs.SLEEPY
-	return needs.energy < Defs.NAPPY and not bedtime(Defs.NAP_GAP)
+	return needs.energy < Defs.NAPPY and not bedtime(Defs.NAP_GAP) and not _shift_ahead()
 
 
 ## True during this person's sleeping hours (or within `lead` hours before them).
@@ -385,6 +385,17 @@ func bedtime(lead := 0.0) -> bool:
 	var h: float = game.hour()
 	var e := _early()
 	return h >= Defs.BEDTIME[_stage] - e - lead or h < Defs.WAKE - e
+
+
+## True on a work or school day until the shift starts.
+func _shift_ahead() -> bool:
+	var c = sched()
+	return c != null and game.day % 7 < 5 and game.hour() < c["start"]
+
+
+## Where this person is drawn, which the step-aside lean can move off their tile.
+func shown_pos() -> Vector3:
+	return position + dodge if pose == "stand" else position
 
 
 ## Hours by which this person's day runs early, so an early shift still leaves a morning.
@@ -774,9 +785,14 @@ func _do(a: Dictionary, dh: float) -> void:
 	var u: String = it.get("until", "")
 	if u != "" and needs[u] >= 99.5:
 		done = true
-	# Rule: nobody in bed gets up in the small hours just because they are rested.
-	if done and it.get("id", "") == "sleep" and bedtime():
-		done = false
+	if it.get("id", "") == "sleep":
+		if bedtime():
+			# Rule: nobody in bed gets up in the small hours just because they are rested.
+			a.night = true
+			done = false
+		elif a.get("night", false) and _shift_ahead():
+			# Rule: on a work day the night ends at the wake time, rested or not.
+			done = true
 	if it.get("sleep", false) and a.kind != "passout" and (needs.hunger < 8.0 or needs.bladder < 8.0):
 		done = true
 	if done:
