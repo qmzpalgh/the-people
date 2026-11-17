@@ -652,7 +652,7 @@ func set_speed(s: int) -> void:
 ## Lists what each screen shows: the lot with its HUD and camera, and the town view with its
 ## own camera.
 func _build_screens() -> void:
-	town_view = TownView.new(town)
+	town_view = TownView.new(self, town)
 	add_child(town_view)
 	screens = {"lot": [lot, ui, cam.cam], "town": [town_view, town_view.cam.cam]}
 	for n in screens["town"]:

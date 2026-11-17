@@ -8,12 +8,15 @@ const ROAD := 7.0
 const WALK := 2.0
 const BOTH := 2           # lots across from each other
 
+var game: Node            # the Main node, for its households
 var town: Town
 var cam: Cam
 var plates := {}          # lot id -> the plate's node
+var houses := {}          # lot id -> the house's node, for home and vacant lots
 
 
-func _init(t: Town = null) -> void:
+func _init(g: Node = null, t: Town = null) -> void:
+	game = g
 	town = t
 
 
@@ -26,7 +29,7 @@ func _ready() -> void:
 		_plate(l)
 	cam = Cam.new()
 	cam.yaw = 0.0
-	cam.pitch = 1.0
+	cam.pitch = 0.75
 	cam.dist = clampf(length * 1.3, 60.0, 250.0)
 	cam.max_dist = 260.0
 	cam.min_pos = Vector2(-20.0, -40.0)
@@ -34,7 +37,7 @@ func _ready() -> void:
 	add_child(cam)
 	cam.position = Vector3(mid, 0, 0)
 	if OS.has_environment("TP_SHOT"):
-		print("town view: %d plates for %d lots" % [plates.size(), town.lots.size()])
+		print("town view: %d plates for %d lots, %d houses for %d home and vacant lots" % [plates.size(), town.lots.size(), houses.size(), town.lots.filter(func(l): return l["kind"] != "empty").size()])
 
 
 ## Where a lot's top-left corner sits. Even slots are on the north side of the road.
@@ -90,3 +93,50 @@ func _plate(l: Dictionary) -> void:
 	Meshes.box(n, Vector3(0.3, 0.5, World.H), Vector3(-0.15, 0.25, World.H / 2.0), hedge)
 	Meshes.box(n, Vector3(0.3, 0.5, World.H), Vector3(World.W + 0.15, 0.25, World.H / 2.0), hedge)
 	plates[l["id"]] = n
+	var look := _look(l)
+	if not look.is_empty():
+		houses[l["id"]] = _house(n, look["house"], look["color"], l["slot"] % BOTH != 0)
+
+
+## The footprint and wall colour of the house on a lot, or {} for bare land. A home reads
+## its household's own world. A vacant house is built again from its seed in a throwaway
+## headless World, which has its own rng and is freed at once, so nothing else moves.
+func _look(l: Dictionary) -> Dictionary:
+	if l["kind"] == "home":
+		var w: World = game.households[l["household"]].world
+		return {"house": w.house, "color": w.wall_color}
+	if l["kind"] == "vacant":
+		var w := World.new()
+		w.headless = true
+		w.setup(int(l["seed"]))
+		var out := {"house": w.house, "color": w.wall_color}
+		w.free()
+		return out
+	return {}
+
+
+## A block house with a roof and a door, in the style of the houses across the road in a lot.
+## The lot's front is on its high-z side; a plate on the south of the road is turned round
+## so that its front faces the street.
+func _house(plate: Node3D, r: Rect2i, wall: Color, turn: bool) -> Node3D:
+	var hs := Node3D.new()
+	hs.position = Vector3(World.W / 2.0, 0, World.H / 2.0)
+	if turn:
+		hs.rotation.y = PI
+	plate.add_child(hs)
+	var bw := float(r.size.x)
+	var bd := float(r.size.y)
+	var bh := 3.2
+	var c := Vector3(r.position.x + bw / 2.0 - World.W / 2.0, 0, r.position.y + bd / 2.0 - World.H / 2.0)
+	Meshes.box(hs, Vector3(bw, bh, bd), c + Vector3(0, bh / 2.0, 0), wall)
+	var roof := MeshInstance3D.new()
+	var pr := PrismMesh.new()
+	pr.size = Vector3(bw + 0.8, 2.4, bd + 0.8)
+	roof.mesh = pr
+	roof.position = c + Vector3(0, bh + pr.size.y / 2.0, 0)
+	roof.material_override = Meshes.mat(Color.from_hsv(0.04, 0.5, 0.45))
+	hs.add_child(roof)
+	Meshes.box(hs, Vector3(1.0, 2.1, 0.1), c + Vector3(0, 1.05, bd / 2.0 + 0.03), Meshes.WOOD.darkened(0.2))
+	for wx in [-bw * 0.32, bw * 0.32]:
+		Meshes.box(hs, Vector3(1.2, 1.1, 0.1), c + Vector3(wx, 1.7, bd / 2.0 + 0.03), Color(0.6, 0.8, 0.95))
+	return hs
