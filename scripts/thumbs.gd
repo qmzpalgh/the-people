@@ -72,6 +72,45 @@ func request(key: String, build: Callable) -> ImageTexture:
 	return tex
 
 
+## Picture of a short wall section in colour `col` for a build tool: "wall", "door",
+## "window", or "erase" (the plain section ghosted and crossed out). Three tiles long at
+## full height, built from the same pieces as World.rebuild_walls(), with the opening in
+## the middle tile. The colour is part of the key, so each wall colour gets its own.
+func wall(tool: String, col: Color) -> ImageTexture:
+	return request("wall:%s:%s" % [tool, col.to_html()], _build_wall.bind(tool, col))
+
+
+static func _build_wall(p: Node3D, tool: String, col: Color) -> void:
+	var h := World.WALL_H
+	var frame := Meshes.WOOD.darkened(0.25)
+	var glass := Color(0.65, 0.85, 0.95, 0.4)
+	var c := Color(col, 0.35) if tool == "erase" else col
+	for i in 3:
+		var x := i - 1.0
+		if i == 1 and tool == "door":
+			_wp(p, x, -0.42, 0.08, 0.0, 2.15, frame)
+			_wp(p, x, 0.42, 0.08, 0.0, 2.15, frame)
+			_wp(p, x, 0.0, 0.84, 0.0, 0.03, frame)
+			_wp(p, x, 0.0, 1.0, 2.15, h, c)
+		elif i == 1 and tool == "window":
+			_wp(p, x, 0.0, 1.0, 0.0, 0.9, c)
+			_wp(p, x, 0.0, 0.9, 0.9, 2.0, glass)
+			_wp(p, x, 0.0, 1.0, 2.0, h, c)
+		else:
+			_wp(p, x, 0.0, 1.0, 0.0, h, c)
+	for i in 4:
+		Meshes.box(p, Vector3(0.12, h, 0.12), Vector3(i - 1.5, h / 2.0, 0), c)
+	if tool == "erase":
+		for sgn in [-1.0, 1.0]:
+			var bar := Meshes.box(p, Vector3(3.6, 0.24, 0.04), Vector3(0, h / 2.0, 0.12), UI.WARN, 0.4)
+			bar.rotation.z = sgn * atan2(h, 3.0)
+
+
+## One piece of wall along x, as World._wp lays it: `length` long, from y0 to y1.
+static func _wp(p: Node3D, x: float, off: float, length: float, y0: float, y1: float, col: Color) -> void:
+	Meshes.box(p, Vector3(length, y1 - y0, 0.12), Vector3(x + off, (y0 + y1) / 2.0, 0), col)
+
+
 ## Swatch of floor type `i` in Defs.FLOORS: the texture the game lays for it, one tile's
 ## worth, with rounded corners. Made at once (it needs no display) and kept.
 func floor_swatch(i: int) -> ImageTexture:

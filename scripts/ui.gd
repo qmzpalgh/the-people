@@ -494,10 +494,11 @@ func build_side() -> void:
 			var b := _seg(cat_box, c, _pick_tab.bind(c))
 			b.button_pressed = c == build_tab
 		if build_tab == "Walls":
-			tool_btns["wall"] = _row("Wall", "$%d" % Defs.WALL_PRICE, _pick_tool.bind("wall"))
-			tool_btns["door"] = _row("Door", "$%d" % Defs.DOOR_PRICE, _pick_tool.bind("door"))
-			tool_btns["window"] = _row("Window", "$%d" % Defs.WINDOW_PRICE, _pick_tool.bind("window"))
-			tool_btns["erase"] = _row("Remove wall", "", _pick_tool.bind("erase"))
+			var wc: Color = game.world.wall_color
+			tool_btns["wall"] = _row("Wall", "$%d" % Defs.WALL_PRICE, _pick_tool.bind("wall"), thumbs.wall("wall", wc))
+			tool_btns["door"] = _row("Door", "$%d" % Defs.DOOR_PRICE, _pick_tool.bind("door"), thumbs.wall("door", wc))
+			tool_btns["window"] = _row("Window", "$%d" % Defs.WINDOW_PRICE, _pick_tool.bind("window"), thumbs.wall("window", wc))
+			tool_btns["erase"] = _row("Remove wall", "", _pick_tool.bind("erase"), thumbs.wall("erase", wc))
 		else:
 			for i in range(1, Defs.FLOORS.size()):
 				var f: Dictionary = Defs.FLOORS[i]
