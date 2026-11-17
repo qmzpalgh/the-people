@@ -32,6 +32,8 @@ var prev_speed := 1
 var mode := "live"
 var screen := "lot"         # the screen showing now: "lot" or "town"
 var screens := {}           # name -> the nodes shown, and running, only on that screen
+var town_view: TownView
+var speed_before_town := 1  # the speed to go back to when leaving the town
 var lot: Node3D             # the player's lot as drawn: its world, everyone, the camera
 var free_will := true
 var rel := {}
@@ -647,24 +649,12 @@ func set_speed(s: int) -> void:
 		p.loop_p.stream_paused = s == 0
 
 
-## Lists what each screen shows. The town is a placeholder for now: a name tag, and a
-## camera left where the lot's camera starts so that a lot still drawn would be seen.
+## Lists what each screen shows: the lot with its HUD and camera, and the town view with its
+## own camera.
 func _build_screens() -> void:
-	var town := CanvasLayer.new()
-	add_child(town)
-	var tag := PanelContainer.new()
-	tag.theme = ui.root.theme
-	tag.position = Vector2(12, 12)
-	town.add_child(tag)
-	var l := Label.new()
-	l.text = "Town"
-	l.add_theme_color_override("font_color", UI.MUTED)
-	tag.add_child(l)
-	var town_cam := Camera3D.new()
-	add_child(town_cam)
-	town_cam.global_transform = cam.cam.global_transform
-	town_cam.fov = cam.cam.fov
-	screens = {"lot": [lot, ui, cam.cam], "town": [town, town_cam]}
+	town_view = TownView.new(town)
+	add_child(town_view)
+	screens = {"lot": [lot, ui, cam.cam], "town": [town_view, town_view.cam.cam]}
 	for n in screens["town"]:
 		_show_node(n, false)
 
@@ -675,6 +665,11 @@ func set_screen(s: String) -> void:
 	if not screens.has(s):
 		push_error("There is no screen called '%s'." % s)
 		return
+	if s == "town" and screen != "town":
+		speed_before_town = speed
+		set_speed(0)  # time stands still in the town
+	elif s != "town" and screen == "town":
+		set_speed(speed_before_town)
 	screen = s
 	for k in screens:
 		if k != s:

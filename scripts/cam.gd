@@ -6,6 +6,9 @@ var cam: Camera3D
 var yaw := 0.55
 var pitch := 0.95
 var dist := 26.0
+var min_pos := Vector2(-10.0, -10.0)  # how far the rig may pan (x, z); the town widens these
+var max_pos := Vector2(World.W + 10.0, World.H + 15.0)
+var max_dist := 70.0
 
 
 func _ready() -> void:
@@ -39,8 +42,8 @@ func _process(delta: float) -> void:
 		yaw -= delta * 1.5
 	if v != Vector3.ZERO:
 		position += Basis(Vector3.UP, yaw) * v.normalized() * delta * dist * 0.8
-		position.x = clampf(position.x, -10.0, World.W + 10.0)
-		position.z = clampf(position.z, -10.0, World.H + 15.0)
+		position.x = clampf(position.x, min_pos.x, max_pos.x)
+		position.z = clampf(position.z, min_pos.y, max_pos.y)
 	_apply()
 
 
@@ -49,7 +52,7 @@ func _unhandled_input(e: InputEvent) -> void:
 		if e.button_index == MOUSE_BUTTON_WHEEL_UP:
 			dist = maxf(6.0, dist * 0.9)
 		elif e.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			dist = minf(70.0, dist * 1.1)
+			dist = minf(max_dist, dist * 1.1)
 	elif e is InputEventMouseMotion and e.button_mask & MOUSE_BUTTON_MASK_MIDDLE:
 		yaw -= e.relative.x * 0.006
 		pitch = clampf(pitch + e.relative.y * 0.005, 0.35, 1.5)
