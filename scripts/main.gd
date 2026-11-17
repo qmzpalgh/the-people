@@ -7,6 +7,7 @@ const MULT := [0.0, 1.0, 4.0, 12.0]
 const Probe := preload("res://scripts/probe.gd")
 
 static var skip_load := false
+static var new_spec := {}  # a household made in the creator, carried across the reload
 static var _run := 0
 static var _probe: RefCounted
 
@@ -117,7 +118,7 @@ func _ready() -> void:
 	if data != null:
 		_load_household(data)
 	else:
-		start_household(random_spec())
+		start_household(_take_spec())
 	if data != null and data.has("town"):
 		town = Town.from_dict(data["town"])
 	else:
@@ -137,6 +138,7 @@ func _ready() -> void:
 	ui.game = self
 	add_child(ui)
 	_build_screens()
+	screens["create"] = _make_create()
 	if not people.is_empty():
 		select(people[0])
 	world.update_room_scores()
@@ -807,6 +809,23 @@ func load_game() -> void:
 func new_game() -> void:
 	skip_load = true
 	get_tree().reload_current_scene()
+
+
+## The household made in the creator, if there is one; otherwise a random one.
+func _take_spec() -> Dictionary:
+	if new_spec.is_empty():
+		return random_spec()
+	var s := new_spec
+	new_spec = {}
+	return s
+
+
+## The creator's nodes, hidden until the `create` screen is shown.
+func _make_create() -> Array:
+	var nodes: Array = load("res://scripts/ui_create.gd").new().setup(self)
+	for n in nodes:
+		_show_node(n, false)
+	return nodes
 
 
 # ---------------------------------------------------------------- picking
