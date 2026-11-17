@@ -46,6 +46,8 @@ var perf_row: HBoxContainer
 var perf_bar: ProgressBar
 var skills_box: GridContainer
 var skill_rows := {}  # skill -> [name, career dot, level, bar]
+var traits_box: GridContainer
+var trait_marks := {}  # trait -> marker
 var tab_btns := {}
 var card_tab := ""
 var side: PanelContainer
@@ -140,6 +142,7 @@ func _ready() -> void:
 		bars[n] = _bar(needs_box, 84, 8)
 	_build_work(cv)
 	_build_skills(cv)
+	_build_traits(cv)
 	info_l = _label(cv, "", 13)
 
 	# Catalogue and build tools.
@@ -647,8 +650,9 @@ func _refresh_card() -> void:
 	needs_box.visible = card_tab == "needs"
 	work_box.visible = card_tab == "work"
 	skills_box.visible = card_tab == "skills"
+	traits_box.visible = card_tab == "traits"
 	# Tabs still on the old text. Each leaves this list when it gets a block of its own.
-	info_l.visible = card_tab in ["traits", "people"]
+	info_l.visible = card_tab in ["people"]
 
 	# Only the needs that want attention surface on their own.
 	var low := []
@@ -684,16 +688,10 @@ func _refresh_card() -> void:
 		_refresh_work(s)
 	if skills_box.visible:
 		_refresh_skills(s)
+	if traits_box.visible:
+		_refresh_traits(s)
 	if info_l.visible:
 		var lines := []
-		var tr := []
-		for t in Defs.TRAITS:
-			if s.traits[t] >= 7:
-				tr.append(t.capitalize())
-			elif s.traits[t] <= 3:
-				tr.append("Not " + t)
-		if not tr.is_empty():
-			lines.append(", ".join(tr))
 		var rl := []
 		for p in game.everyone():
 			var r: float = game.get_rel(s, p)
@@ -843,3 +841,57 @@ func _refresh_skills(s: Person) -> void:
 		var a := 0.45 if v <= 0.0 else 1.0
 		row[0].modulate.a = a
 		row[2].modulate.a = a
+
+
+# ---------------------------------------------------------------- traits tab
+
+## The word at each end of a trait's 1 to 9 scale: low first, high second.
+const TRAIT_ENDS := {
+	"neat": ["Messy", "Neat"], "outgoing": ["Shy", "Outgoing"], "active": ["Laid-back", "Active"],
+	"playful": ["Serious", "Playful"], "nice": ["Grumpy", "Nice"],
+}
+const TRAIT_W := 110.0  # every track is the same width, so markers compare down the column
+
+
+func _build_traits(parent: Node) -> void:
+	traits_box = GridContainer.new()
+	traits_box.columns = 3
+	traits_box.add_theme_constant_override("h_separation", 10)
+	traits_box.add_theme_constant_override("v_separation", 5)
+	parent.add_child(traits_box)
+	for t in Defs.TRAITS:
+		var lo := _label(traits_box, TRAIT_ENDS[t][0], 13)
+		lo.custom_minimum_size.x = 70
+		lo.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		var track := Control.new()
+		track.custom_minimum_size = Vector2(TRAIT_W, 12)
+		track.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		traits_box.add_child(track)
+		var line := Panel.new()
+		line.add_theme_stylebox_override("panel", _sb(Color(INK, 0.1), 2, 0, 0))
+		line.position = Vector2(0, 4)
+		line.size = Vector2(TRAIT_W, 4)
+		line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		track.add_child(line)
+		var mid := ColorRect.new()
+		mid.color = Color(INK, 0.22)
+		mid.position = Vector2(TRAIT_W / 2.0 - 0.5, 1)
+		mid.size = Vector2(1, 10)
+		mid.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		track.add_child(mid)
+		var mark := Panel.new()
+		mark.add_theme_stylebox_override("panel", _sb(INK, 5, 0, 0))
+		mark.size = Vector2(10, 10)
+		mark.position.y = 1
+		mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		track.add_child(mark)
+		trait_marks[t] = mark
+		_label(traits_box, TRAIT_ENDS[t][1], 13)
+
+
+## The marker's centre sits at (value - 1) / 8 along the track: 1 far left, 5 centre, 9 far right.
+func _refresh_traits(s: Person) -> void:
+	for t in trait_marks:
+		var v: float = clampf(s.traits[t], 1, 9)
+		trait_marks[t].position.x = (v - 1.0) / 8.0 * TRAIT_W - 5.0
+		trait_marks[t].get_parent().tooltip_text = "%s %d of 9" % [t.capitalize(), int(v)]
