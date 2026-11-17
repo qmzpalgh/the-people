@@ -38,7 +38,6 @@ var alerts: HFlowContainer
 var queue_box: HFlowContainer
 var needs_box: GridContainer
 var bars := {}
-var info_l: Label
 var stage_box: HBoxContainer
 var work_box: VBoxContainer
 var work_l: Array = []  # title, detail, next step, needs
@@ -147,7 +146,6 @@ func _ready() -> void:
 	_build_skills(cv)
 	_build_traits(cv)
 	_build_people(cv)
-	info_l = _label(cv, "", 13)
 
 	# Catalogue and build tools.
 	side = PanelContainer.new()
@@ -458,7 +456,7 @@ func show_game_over() -> void:
 
 
 func debug_open(what: String) -> void:
-	card_tab = "needs" if what.contains("needs") else "work" if what.contains("info") else ""
+	card_tab = "needs" if what.contains("needs") else ""
 	for t in CARD_TABS:
 		if what.contains("tab:" + t):
 			card_tab = t
@@ -656,7 +654,6 @@ func _refresh_card() -> void:
 	skills_box.visible = card_tab == "skills"
 	traits_box.visible = card_tab == "traits"
 	people_scroll.visible = card_tab == "people"
-	info_l.visible = false  # every tab has its own block now; A7 removes the old text
 
 	# Only the needs that want attention surface on their own.
 	var low := []
@@ -895,7 +892,7 @@ func _refresh_traits(s: Person) -> void:
 
 # ---------------------------------------------------------------- people tab
 
-const REL_W := 58.0  # width of every relationship track
+const REL_W := 52.0  # width of every relationship track
 const ROW_H := 24.0
 const PEOPLE_ROWS := 6  # rows shown before the list scrolls
 
@@ -904,10 +901,22 @@ func _build_people(parent: Node) -> void:
 	people_scroll = ScrollContainer.new()
 	people_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	parent.add_child(people_scroll)
+	# A slim, quiet scroll bar instead of the default grey one.
+	var vb := people_scroll.get_v_scroll_bar()
+	vb.custom_minimum_size.x = 4
+	for st in ["scroll", "scroll_focus"]:
+		vb.add_theme_stylebox_override(st, _sb(Color(INK, 0.05), 2, 0, 0))
+	vb.add_theme_stylebox_override("grabber", _sb(Color(INK, 0.22), 2, 0, 0))
+	vb.add_theme_stylebox_override("grabber_highlight", _sb(Color(INK, 0.38), 2, 0, 0))
+	vb.add_theme_stylebox_override("grabber_pressed", _sb(Color(INK, 0.5), 2, 0, 0))
+	# The scroll bar is drawn over the list's right edge, so keep the words clear of it.
+	var pad := MarginContainer.new()
+	pad.add_theme_constant_override("margin_right", 6)
+	pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	people_scroll.add_child(pad)
 	people_list = VBoxContainer.new()
 	people_list.add_theme_constant_override("separation", 0)
-	people_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	people_scroll.add_child(people_list)
+	pad.add_child(people_list)
 
 
 ## Everyone the selected person knows: the rest of the household always, anyone else
@@ -968,7 +977,7 @@ func _people_note(text: String) -> void:
 
 
 func _people_row(p: Person) -> void:
-	var row := _hbox(people_list, 6)
+	var row := _hbox(people_list, 5)
 	row.custom_minimum_size.y = ROW_H
 	# A small version of the household chips: residents filled, visitors outlined.
 	var chip := PanelContainer.new()
@@ -1011,6 +1020,6 @@ func _people_row(p: Person) -> void:
 	track.add_child(mid)
 	var word := _label(row, "", 12)
 	word.add_theme_color_override("font_color", MUTED)
-	word.custom_minimum_size.x = 82  # leaves a gap before the scroll bar
+	word.custom_minimum_size.x = 78
 	word.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	people_rows.append([p, fill, word])
