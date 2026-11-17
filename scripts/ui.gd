@@ -61,6 +61,10 @@ var item_btns := {}
 var tool_btns := {}
 var cat := "Seating"
 var build_tab := "Walls"
+## Side of a thumbnail on a row and on a catalogue tile, in pixels.
+const PIC := 40
+const TILE_PIC := 64
+var thumbs: Thumbs
 var toasts: VBoxContainer
 var menu: PopupMenu
 var menu_calls: Array = []
@@ -152,19 +156,21 @@ func _ready() -> void:
 	_place(side, Control.PRESET_CENTER_RIGHT, -12, 0)
 	var sv := VBoxContainer.new()
 	sv.add_theme_constant_override("separation", 8)
-	sv.custom_minimum_size.x = 236
+	sv.custom_minimum_size.x = 268
 	side.add_child(sv)
 	side_title = _label(sv, "", 17)
 	cat_box = HFlowContainer.new()
 	sv.add_child(cat_box)
 	var sc := ScrollContainer.new()
-	sc.custom_minimum_size.y = 300
+	sc.custom_minimum_size.y = 352
 	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	sv.add_child(sc)
 	list_box = VBoxContainer.new()
 	list_box.add_theme_constant_override("separation", 2)
 	list_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sc.add_child(list_box)
+	thumbs = Thumbs.new()
+	add_child(thumbs)
 	hint_l = _label(sv, "", 13)
 	hint_l.add_theme_color_override("font_color", MUTED)
 	hint_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -471,6 +477,11 @@ func debug_open(what: String) -> void:
 	if what.contains("floors"):
 		build_tab = "Floors"
 		build_side()
+	if _ui_word(what, "cat:") in Defs.CATS:
+		cat = _ui_word(what, "cat:")
+		build_side()
+	if Defs.OBJECTS.has(_ui_word(what, "buy:")):
+		game.set_buy(_ui_word(what, "buy:"))
 	if what.contains("options"):
 		_open_options.call_deferred()
 
@@ -496,42 +507,37 @@ func build_side() -> void:
 		sb.add_theme_font_size_override("font_size", 13)
 		sb.add_theme_color_override("font_color", WARN)
 		if not game.sell:
+			var grid := GridContainer.new()
+			grid.columns = 2
+			grid.add_theme_constant_override("h_separation", 6)
+			grid.add_theme_constant_override("v_separation", 6)
+			list_box.add_child(grid)
 			for k in Defs.OBJECTS:
-				var d: Dictionary = Defs.OBJECTS[k]
-				if d["cat"] == cat:
-					item_btns[k] = _row(d["name"], "$%d" % d["price"], game.set_buy.bind(k))
+				if Defs.OBJECTS[k]["cat"] == cat:
+					item_btns[k] = _tile(grid, k)
 	elif game.mode == "build":
 		side_title.text = "Build"
 		for c in ["Walls", "Floors"]:
 			var b := _seg(cat_box, c, _pick_tab.bind(c))
 			b.button_pressed = c == build_tab
 		if build_tab == "Walls":
-			tool_btns["wall"] = _row("Wall", "$%d" % Defs.WALL_PRICE, _pick_tool.bind("wall"))
-			tool_btns["door"] = _row("Door", "$%d" % Defs.DOOR_PRICE, _pick_tool.bind("door"))
-			tool_btns["window"] = _row("Window", "$%d" % Defs.WINDOW_PRICE, _pick_tool.bind("window"))
-			tool_btns["erase"] = _row("Remove wall", "", _pick_tool.bind("erase"))
+			var wc: Color = game.world.wall_color
+			tool_btns["wall"] = _row("Wall", "$%d" % Defs.WALL_PRICE, _pick_tool.bind("wall"), thumbs.wall("wall", wc))
+			tool_btns["door"] = _row("Door", "$%d" % Defs.DOOR_PRICE, _pick_tool.bind("door"), thumbs.wall("door", wc))
+			tool_btns["window"] = _row("Window", "$%d" % Defs.WINDOW_PRICE, _pick_tool.bind("window"), thumbs.wall("window", wc))
+			tool_btns["erase"] = _row("Remove wall", "", _pick_tool.bind("erase"), thumbs.wall("erase", wc))
 		else:
 			for i in range(1, Defs.FLOORS.size()):
 				var f: Dictionary = Defs.FLOORS[i]
-				tool_btns["floor:%d" % i] = _row(f["name"], "$%d" % f["price"], _pick_tool.bind("floor:%d" % i), f["tint"])
+				tool_btns["floor:%d" % i] = _row(f["name"], "$%d" % f["price"], _pick_tool.bind("floor:%d" % i), thumbs.floor_swatch(i))
 			tool_btns["floor:0"] = _row("Remove floor", "", _pick_tool.bind("floor:0"))
 
 
-func _row(text: String, right: String, cb: Callable, swatch = null) -> Button:
+func _row(text: String, right: String, cb: Callable, pic: Texture2D = null) -> Button:
 	var b := _seg(list_box, text, cb)
 	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	if swatch != null:
-		var sw := ColorRect.new()
-		sw.color = swatch
-		sw.custom_minimum_size = Vector2(14, 14)
-		sw.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		b.add_child(sw)
-		sw.set_anchors_preset(Control.PRESET_CENTER_LEFT)
-		sw.offset_left = 10
-		sw.offset_right = 24
-		sw.offset_top = -7
-		sw.offset_bottom = 7
-		b.text = "      " + text
+	if pic != null:
+		_pic(b, pic)
 	if right != "":
 		var l := _label(b, right, 13)
 		l.add_theme_color_override("font_color", MUTED)
@@ -544,6 +550,122 @@ func _row(text: String, right: String, cb: Callable, swatch = null) -> Button:
 		l.offset_top = -10
 		l.offset_bottom = 10
 	return b
+
+
+## Puts a thumbnail left of a row's name. It is drawn at a fixed size, so the row keeps its
+## height while the picture is still blank, and greys with the row (see refresh).
+func _pic(b: Button, pic: Texture2D) -> void:
+	b.icon = pic
+	b.add_theme_constant_override("icon_max_width", PIC)
+	b.add_theme_constant_override("h_separation", 8)
+	b.add_theme_stylebox_override("normal", _sb(Color(0, 0, 0, 0), 8, 6, 2))
+	b.add_theme_stylebox_override("disabled", _sb(Color(0, 0, 0, 0), 8, 6, 2))
+	b.add_theme_stylebox_override("hover", _sb(Color(INK, 0.08), 8, 6, 2))
+	b.add_theme_stylebox_override("pressed", _sb(INK, 8, 6, 2))
+	b.add_theme_stylebox_override("hover_pressed", _sb(INK, 8, 6, 2))
+	for c in ["icon_normal_color", "icon_hover_color", "icon_pressed_color", "icon_hover_pressed_color"]:
+		b.add_theme_color_override(c, Color.WHITE)
+	b.add_theme_color_override("icon_disabled_color", Color(1, 1, 1, 0.5))
+	b.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+
+
+## A catalogue tile: the object's picture on top, its name under it and the price under
+## that. Selecting and greying work as for a row.
+func _tile(parent: Node, kind: String) -> Button:
+	var d: Dictionary = Defs.OBJECTS[kind]
+	var b := _seg(parent, d["name"], game.set_buy.bind(kind))
+	_pic(b, thumbs.object(kind))
+	b.add_theme_constant_override("icon_max_width", TILE_PIC)
+	b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	b.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP
+	b.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.add_theme_font_size_override("font_size", 13)
+	for st in [["normal", Color(0, 0, 0, 0)], ["disabled", Color(0, 0, 0, 0)], ["hover", Color(INK, 0.08)],
+			["pressed", INK], ["hover_pressed", INK]]:
+		var sb := _sb(st[1], 10, 6, 8)
+		sb.content_margin_bottom = 26
+		b.add_theme_stylebox_override(st[0], sb)
+	var l := _label(b, "$%d" % d["price"], 12)
+	l.add_theme_color_override("font_color", MUTED)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
+	l.offset_top = -26
+	l.offset_bottom = -8
+	b.tooltip_text = _details(kind)
+	return b
+
+
+## What an object is for, in a few short lines: what people can do with it (as its click
+## menu names them), then how comfortable it is and what it does for the room, if anything.
+func _details(kind: String) -> String:
+	var d: Dictionary = Defs.OBJECTS[kind]
+	var lines := []
+	var uses := []
+	var comfort: float = d.get("comfort", 0.0)
+	for it in d.get("acts", []):
+		comfort = maxf(comfort, it.get("needs", {}).get("comfort", 0.0))
+		if it.get("hidden", false):
+			continue
+		var label: String = it["label"]
+		if it.has("req"):
+			label += " with a " + Defs.OBJECTS[it["req"]]["name"].to_lower()
+		uses.append(label)
+	# An object with only hidden acts is used from another one (the stove, from the fridge).
+	for k in Defs.OBJECTS:
+		for it in Defs.OBJECTS[k].get("acts", []):
+			if uses.is_empty() and (it.get("req", "") == kind or it.get("then", {}).get("kind", "") == kind):
+				uses.append("Needed to %s at the %s" % [it["label"].get_slice(" (", 0).to_lower(), Defs.OBJECTS[k]["name"].to_lower()])
+	if d.get("light", false):
+		uses.append("Lights the room at night")
+	if uses.is_empty():
+		uses.append("Garden decoration" if d["cat"] == "Garden" else "Decoration")
+	lines.append(_wrap(uses, 34))
+	if d.get("seat", false):
+		lines.append("A seat for meals, TV and reading")
+	if comfort >= 45.0:
+		lines.append("Very comfortable")
+	elif comfort >= 25.0:
+		lines.append("Comfortable")
+	elif comfort > 0.0:
+		lines.append("A little comfortable")
+	var room: float = d.get("room", 0.0)
+	var nicer := ""
+	if room >= 5.0:
+		nicer = "Makes the room much nicer"
+	elif room >= 2.0:
+		nicer = "Makes the room nicer"
+	elif room > 0.0:
+		nicer = "Makes the room a little nicer"
+	elif room < 0.0:
+		nicer = "Makes the room worse"
+	# Outdoors has a fixed room score, so garden things only count inside a room.
+	if nicer != "" and d["cat"] == "Garden":
+		nicer += " (indoors only)"
+	if nicer != "":
+		lines.append(nicer)
+	return "\n".join(lines)
+
+
+## Joins `items` with commas, starting a new line between items rather than past `width`.
+func _wrap(items: Array, width: int) -> String:
+	var out := ""
+	var line := ""
+	for w in items:
+		if line != "" and line.length() + 2 + w.length() > width:
+			out += line + ",\n"
+			line = w
+		else:
+			line = w if line == "" else line + ", " + w
+	return out + line
+
+
+## The text after `key` in a TP_UI string, up to the next comma or space ("cat:Fun" gives "Fun").
+func _ui_word(what: String, key: String) -> String:
+	var i := what.find(key)
+	if i < 0:
+		return ""
+	return what.substr(i + key.length()).get_slice(",", 0).get_slice(" ", 0)
 
 
 func _pick_cat(c: String) -> void:
@@ -602,6 +724,14 @@ func refresh() -> void:
 		for k in item_btns:
 			item_btns[k].set_pressed_no_signal(game.buy_kind == k)
 			item_btns[k].disabled = Defs.OBJECTS[k]["price"] > game.money
+			var gm: Material = Thumbs.greyed() if item_btns[k].disabled else null
+			if item_btns[k].material != gm:
+				item_btns[k].material = gm
+			# The price on a selected (ink) tile is lighter so it can be read.
+			var pl: Label = item_btns[k].get_child(0)
+			var pc := Color(1, 1, 1, 0.65) if item_btns[k].button_pressed else MUTED
+			if pl.get_theme_color("font_color") != pc:
+				pl.add_theme_color_override("font_color", pc)
 		for k in tool_btns:
 			tool_btns[k].set_pressed_no_signal(game.tool == k)
 		hint_l.text = _hint()
