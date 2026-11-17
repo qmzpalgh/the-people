@@ -143,7 +143,7 @@ func _ready() -> void:
 	cat_box = HFlowContainer.new()
 	sv.add_child(cat_box)
 	var sc := ScrollContainer.new()
-	sc.custom_minimum_size.y = 300
+	sc.custom_minimum_size.y = 352
 	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	sv.add_child(sc)
 	list_box = VBoxContainer.new()
@@ -501,27 +501,15 @@ func build_side() -> void:
 		else:
 			for i in range(1, Defs.FLOORS.size()):
 				var f: Dictionary = Defs.FLOORS[i]
-				tool_btns["floor:%d" % i] = _row(f["name"], "$%d" % f["price"], _pick_tool.bind("floor:%d" % i), f["tint"])
+				tool_btns["floor:%d" % i] = _row(f["name"], "$%d" % f["price"], _pick_tool.bind("floor:%d" % i), thumbs.floor_swatch(i))
 			tool_btns["floor:0"] = _row("Remove floor", "", _pick_tool.bind("floor:0"))
 
 
-func _row(text: String, right: String, cb: Callable, swatch = null, pic: Texture2D = null) -> Button:
+func _row(text: String, right: String, cb: Callable, pic: Texture2D = null) -> Button:
 	var b := _seg(list_box, text, cb)
 	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	if pic != null:
 		_pic(b, pic)
-	if swatch != null:
-		var sw := ColorRect.new()
-		sw.color = swatch
-		sw.custom_minimum_size = Vector2(14, 14)
-		sw.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		b.add_child(sw)
-		sw.set_anchors_preset(Control.PRESET_CENTER_LEFT)
-		sw.offset_left = 10
-		sw.offset_right = 24
-		sw.offset_top = -7
-		sw.offset_bottom = 7
-		b.text = "      " + text
 	if right != "":
 		var l := _label(b, right, 13)
 		l.add_theme_color_override("font_color", MUTED)

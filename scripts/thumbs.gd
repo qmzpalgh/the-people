@@ -17,6 +17,9 @@ const YAW := 0.6
 const PITCH := 0.5
 ## Frame width as a share of the model's, so nothing touches the edge.
 const MARGIN := 1.08
+## Floor swatches: the seed their texture is made from, and their corner radius in texels.
+const SWATCH_SEED := 11
+const CORNER := 9.0
 
 static var _grey: ShaderMaterial
 
@@ -66,6 +69,33 @@ func request(key: String, build: Callable) -> ImageTexture:
 	if _can_draw():
 		_queue.append([key, build])
 		set_process(true)
+	return tex
+
+
+## Swatch of floor type `i` in Defs.FLOORS: the texture the game lays for it, one tile's
+## worth, with rounded corners. Made at once (it needs no display) and kept.
+func floor_swatch(i: int) -> ImageTexture:
+	var key := "floor:%d" % i
+	if _cache.has(key):
+		return _cache[key]
+	var f: Dictionary = Defs.FLOORS[i]
+	# A fixed seed, so a swatch is the same every run and no game dice are used.
+	var img := Meshes.make_tex(f["tex"], f["tint"], SWATCH_SEED + i).get_image()
+	img.clear_mipmaps()
+	img.convert(Image.FORMAT_RGBA8)
+	var n := img.get_width()
+	for y in n:
+		for x in n:
+			var p := Vector2(x + 0.5, y + 0.5)
+			var c := Vector2(clampf(p.x, CORNER, n - CORNER), clampf(p.y, CORNER, n - CORNER))
+			var a := clampf(CORNER + 0.5 - p.distance_to(c), 0.0, 1.0)
+			if a < 1.0:
+				var col := img.get_pixel(x, y)
+				col.a = a
+				img.set_pixel(x, y, col)
+	img.generate_mipmaps()
+	var tex := ImageTexture.create_from_image(img)
+	_cache[key] = tex
 	return tex
 
 
