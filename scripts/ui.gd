@@ -40,6 +40,10 @@ var needs_box: GridContainer
 var bars := {}
 var info_l: Label
 var stage_box: HBoxContainer
+var work_box: VBoxContainer
+var work_l: Array = []  # title, detail, next step, needs
+var perf_row: HBoxContainer
+var perf_bar: ProgressBar
 var tab_btns := {}
 var card_tab := ""
 var side: PanelContainer
@@ -132,6 +136,7 @@ func _ready() -> void:
 		var l := _label(needs_box, Defs.NEED_NAMES[n], 13)
 		l.custom_minimum_size.x = 58
 		bars[n] = _bar(needs_box, 84, 8)
+	_build_work(cv)
 	info_l = _label(cv, "", 13)
 
 	# Catalogue and build tools.
@@ -637,8 +642,9 @@ func _refresh_card() -> void:
 	for t in tab_btns:
 		tab_btns[t].set_pressed_no_signal(t == card_tab)
 	needs_box.visible = card_tab == "needs"
+	work_box.visible = card_tab == "work"
 	# Tabs still on the old text. Each leaves this list when it gets a block of its own.
-	info_l.visible = card_tab in ["work", "skills", "traits", "people"]
+	info_l.visible = card_tab in ["skills", "traits", "people"]
 
 	# Only the needs that want attention surface on their own.
 	var low := []
@@ -670,19 +676,10 @@ func _refresh_card() -> void:
 	if card_tab == "needs":
 		for n in Defs.NEEDS:
 			_set_bar(bars[n], s.needs[n])
+	if work_box.visible:
+		_refresh_work(s)
 	if info_l.visible:
 		var lines := []
-		if s.job != null:
-			var c: Dictionary = Defs.CAREERS[s.job.career]
-			lines.append("%s, $%d a day, %d:00 to %d:00 on weekdays" % [c["titles"][s.job.level], c["pay"][s.job.level],
-				int(c["start"]), int(c["start"] + c["hours"])])
-			lines.append("Work performance %d%%" % int(clampf(s.job.perf, 0, 100)))
-		elif s.stage() == "child":
-			lines.append("At school 8:00 to 14:00 on weekdays")
-		elif s.stage() == "elder":
-			lines.append("Retired, $%d a day pension" % Defs.PENSION)
-		else:
-			lines.append("No job yet. A computer can find one.")
 		var sk := []
 		for k in Defs.SKILLS:
 			if s.skills[k] >= 1.0:
@@ -737,3 +734,63 @@ func _stage_words(s: Person) -> String:
 		"elder":
 			return "Elder, day %d" % int(s.age)
 	return "Adult, day %d" % int(s.age)
+
+
+# ---------------------------------------------------------------- work tab
+
+func _build_work(parent: Node) -> void:
+	work_box = VBoxContainer.new()
+	work_box.add_theme_constant_override("separation", 4)
+	parent.add_child(work_box)
+	work_l.append(_label(work_box, "", 14))
+	work_l.append(_label(work_box, "", 13))
+	work_l[1].add_theme_color_override("font_color", MUTED)
+	perf_row = _hbox(work_box, 8)
+	_label(perf_row, "Performance", 13)
+	perf_bar = _bar(perf_row, 0, 8)
+	perf_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	perf_bar.tooltip_text = "Full performance and enough skill earn a promotion."
+	work_l.append(_label(work_box, "", 13))
+	work_l.append(_label(work_box, "", 13))
+	work_l[3].add_theme_color_override("font_color", MUTED)
+
+
+## Title, detail, next step and what it needs, for the work tab.
+func _work_lines(s: Person) -> Array:
+	if s.job == null:
+		if s.stage() == "child":
+			return ["At school", "%d:00 to %d:00 on weekdays" % [int(Defs.SCHOOL["start"]), int(Defs.SCHOOL["start"] + Defs.SCHOOL["hours"])],
+				"", "Each school day adds a little Logic."]
+		if s.stage() == "elder":
+			return ["Retired", "A pension of $%d a day." % Defs.PENSION, "", ""]
+		return ["No job yet", "A computer can find one.", "", ""]
+	var c: Dictionary = Defs.CAREERS[s.job.career]
+	var lv: int = s.job.level
+	var lines := ["%s, %s" % [c["titles"][lv], c["name"]],
+		"$%d a day, %d:00 to %d:00 on weekdays" % [c["pay"][lv], int(c["start"]), int(c["start"] + c["hours"])]]
+	if lv >= 4:
+		return lines + ["Top of the career. There is nothing higher.", ""]
+	lines.append("Next: " + c["titles"][lv + 1])
+	var need := (lv + 1) * 2
+	var has: float = s.skills[c["skill"]]
+	var skill := "%s %d" % [c["skill"].capitalize(), need]
+	var full: bool = s.job.perf >= 100.0
+	if has < need and full:
+		lines.append("Needs %s (has %d)" % [skill, int(has)])
+	elif has < need:
+		lines.append("Needs %s and full performance" % skill)
+	elif not full:
+		lines.append("Needs full performance")
+	else:
+		lines.append("Due after the next workday")
+	return lines
+
+
+func _refresh_work(s: Person) -> void:
+	var lines := _work_lines(s)
+	for i in work_l.size():
+		work_l[i].text = lines[i]
+		work_l[i].visible = lines[i] != ""
+	perf_row.visible = s.job != null
+	if s.job != null:
+		perf_bar.value = clampf(s.job.perf, 0.0, 100.0)
