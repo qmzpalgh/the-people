@@ -52,6 +52,7 @@ var item_btns := {}
 var tool_btns := {}
 var cat := "Seating"
 var build_tab := "Walls"
+var thumbs: Thumbs
 var toasts: VBoxContainer
 var menu: PopupMenu
 var menu_calls: Array = []
@@ -146,6 +147,8 @@ func _ready() -> void:
 	list_box.add_theme_constant_override("separation", 2)
 	list_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sc.add_child(list_box)
+	thumbs = Thumbs.new()
+	add_child(thumbs)
 	hint_l = _label(sv, "", 13)
 	hint_l.add_theme_color_override("font_color", MUTED)
 	hint_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
