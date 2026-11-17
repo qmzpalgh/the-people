@@ -4,7 +4,11 @@ extends Node3D
 
 const MULT := [0.0, 1.0, 4.0, 12.0]
 
+const Probe := preload("res://scripts/probe.gd")
+
 static var skip_load := false
+static var _run := 0
+static var _probe: RefCounted
 
 var save_path := "user://the_people_save_v2.json"
 var world: World
@@ -55,7 +59,7 @@ var _room_t := 0.0
 var _light_t := -1.0
 
 var _test_days := 0
-var _samples := {}
+var _runs := 1
 var _shot := ""
 var _frames := 0
 
@@ -75,14 +79,15 @@ func _ready() -> void:
 	if OS.has_environment("TP_SAVE"):
 		save_path = OS.get_environment("TP_SAVE")
 	var testing := OS.has_environment("TP_TEST") or OS.has_environment("TP_SHOT")
-	var fresh := skip_load or (testing and not OS.has_environment("TP_SAVE")) or OS.has_environment("TP_FRESH")
+	# Only the first of several pooled test runs may continue a save; the rest start new.
+	var fresh := skip_load or (testing and not OS.has_environment("TP_SAVE")) or OS.has_environment("TP_FRESH") or _run > 0
 	skip_load = false
 	if testing and not OS.has_environment("TP_SAVE"):
 		save_path = "user://tp_test_save.json"
 	var data = null if fresh else _read_save()
 	var seed_v := randi()
 	if OS.has_environment("TP_SEED"):
-		seed_v = int(OS.get_environment("TP_SEED"))
+		seed_v = int(OS.get_environment("TP_SEED")) + _run
 	if data != null:
 		seed_v = int(data["seed"])
 	seed_base = seed_v
@@ -129,6 +134,14 @@ func _ready() -> void:
 		msg("Meet the %s household. Click things to give orders, or just watch. Press H for controls." % family)
 	if OS.has_environment("TP_TEST"):
 		_test_days = int(OS.get_environment("TP_TEST"))
+		if OS.has_environment("TP_RUNS"):
+			_runs = int(OS.get_environment("TP_RUNS"))
+		if _probe == null:
+			_probe = Probe.new()
+		_probe.begin(self)
+		for p in everyone():
+			if p.tile != p.world.door_tile and p.world.path(p.world.door_tile, p.tile) == null:
+				print("STUCK: %s (household %d) starts at %s, which cannot be reached from the door" % [p.pname, p.household, p.tile])
 		sfx.set_muted(true)
 		if data == null:
 			for p in people:
@@ -301,11 +314,16 @@ func _process(delta: float) -> void:
 	if _test_days > 0:
 		for i in 240:
 			_step(1.0 / 60.0, 1.0)
-			if int(minutes) % 60 == 0:
-				_sample()
+			_probe.step(1.0 / 60.0)
 		if day >= _test_days or over:
+			# TP_RUNS repeats the run on consecutive seeds and pools the balance report.
+			_run += 1
 			_report()
-			get_tree().quit()
+			if _run < _runs:
+				get_tree().reload_current_scene()
+			else:
+				_probe.report()
+				get_tree().quit()
 			return
 	else:
 		var m: float = MULT[speed]
@@ -337,7 +355,7 @@ func _step(dh: float, ds: float) -> void:
 			if p.away or p.vstate != "home" or p.work_flag_day == day:
 				continue
 			var c = p.sched()
-			if c != null and h >= c["start"] - 1.0 and h < c["start"] + 2.0:
+			if c != null and h >= c["start"] - Defs.COMMUTE and h < c["start"] + 2.0:
 				p.work_flag_day = day
 				p.go_to_work()
 	_room_t -= dh
@@ -405,7 +423,8 @@ func _new_day() -> void:
 
 func msg(text: String, snd := "") -> void:
 	if _test_days > 0:
-		print("[d%d %05.2f] %s" % [day, hour(), text])
+		if _runs == 1:
+			print("[d%d %05.2f] %s" % [day, hour(), text])
 		return
 	if ui != null:
 		ui.push_msg(text)
@@ -720,7 +739,7 @@ func pick_person(mpos: Vector2):
 		if not p.visible:
 			continue
 		for hy in [0.5, 1.0, 1.5]:
-			var v: Vector3 = p.position + Vector3(0, hy * p.h_scale, 0) - o
+			var v: Vector3 = p.shown_pos() + Vector3(0, hy * p.h_scale, 0) - o
 			var t := v.dot(d)
 			if (v - d * t).length() < 0.4 and t < bt:
 				bt = t
@@ -1010,17 +1029,6 @@ func _update_ghost() -> void:
 
 # ---------------------------------------------------------------- test harness
 
-func _sample() -> void:
-	for p in people:
-		for n in Defs.NEEDS:
-			var k: String = p.first() + "." + n
-			var s: Array = _samples.get(k, [0.0, 0, 100.0])
-			s[0] += p.needs[n]
-			s[1] += 1
-			s[2] = minf(s[2], p.needs[n])
-			_samples[k] = s
-
-
 func _report() -> void:
 	print("=== %d days simulated, household %d, over=%s ===" % [day, people.size(), over])
 	for id in households:
@@ -1036,7 +1044,7 @@ func _report() -> void:
 				jb = "%s L%d" % [Defs.CAREERS[p.job.career]["name"], p.job.level]
 			print("      job %s, doing %s, actions %s" % [jb, p.activity(), p.stats])
 	print("   memorials: ", households.values().map(func(h): return h.world.objects.filter(func(o): return o.kind == "grave").map(func(o): return o.label)))
-	if OS.has_environment("TP_SAVE"):
+	if OS.has_environment("TP_SAVE") and _runs == 1:
 		save_game(true)
 		print("   saved to ", save_path)
 

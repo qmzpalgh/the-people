@@ -5,6 +5,8 @@ extends Node3D
 
 const WALK := 2.2  # tiles per game minute
 const HIP := 0.8
+const DODGE := 0.3     # how far someone leans aside to let another person past, in tiles
+const DODGE_R := 1.4   # how close the other person has to be
 
 var game
 var world: World
@@ -20,6 +22,7 @@ var job = null  # {career: int, level: int, perf: float}
 var age := 10.0  # days
 var lifespan := 42.0
 var starve_t := 0.0
+var meal_t := -99999.0  # game minutes at which they last finished a meal
 var dead := false
 var look := {}
 var queue: Array = []
@@ -30,6 +33,7 @@ var away := false
 var idle_t := 1.0
 var anim_t := 0.0
 var bubble_t := 0.0
+var dodge := Vector3.ZERO
 var work_flag_day := -1
 var work_day := -1
 var pose := "stand"
@@ -223,7 +227,7 @@ func say(text: String, secs := 2.0) -> void:
 
 
 func _chirp() -> void:
-	if game.sfx == null or world != game.world:
+	if not Sfx.ENABLED or world != game.world:
 		return
 	voice.stream = game.sfx.get_stream("talk%d" % rng.randi_range(0, 2))
 	voice.pitch_scale = look["pitch"] * (1.5 if stage() == "child" else 1.0) * rng.randf_range(0.95, 1.05)
@@ -231,7 +235,7 @@ func _chirp() -> void:
 
 
 func _loop(n: String) -> void:
-	if n == "" or game.sfx == null or world != game.world:
+	if n == "" or not Sfx.ENABLED or world != game.world:
 		loop_p.stop()
 		return
 	loop_p.stream = game.sfx.get_stream(n)
@@ -352,13 +356,79 @@ func usable(o: SimObject, it: Dictionary, auto: bool) -> bool:
 			return false
 		if it.has("until") and needs[it["until"]] > 82.0:
 			return false
-		if it.get("sleep", false) and needs.energy > 65.0:
+		if it.get("sleep", false) and not _wants_sleep(it):
+			return false
+		# Rule: meals belong to mealtimes; in between it is snacks, and only when peckish.
+		if it["id"] == "meal" and (_no_time_to_cook() or (needs.hunger >= Defs.RAVENOUS and not (mealtime() and needs.hunger < Defs.FULL))):
+			return false
+		if it["id"] == "snack" and needs.hunger >= Defs.PECKISH and not (_snack_meal() and needs.hunger < Defs.FULL):
 			return false
 		if it.get("special", "") == "invite" and needs.social > 55.0:
 			return false
 	elif it.has("mood_min") and mood() < it["mood_min"] - 20:
 		return false
 	return true
+
+
+## Rule: people keep to the clock. Bed is for the night, a nap is for a worn-out
+## afternoon, and only real exhaustion sends anyone to bed in daylight.
+func _wants_sleep(it: Dictionary) -> bool:
+	if needs.energy < Defs.EXHAUSTED:
+		return true
+	if it["id"] != "nap":
+		return bedtime() and needs.energy < Defs.SLEEPY
+	return needs.energy < Defs.NAPPY and not bedtime(Defs.NAP_GAP) and not _shift_ahead()
+
+
+## True during this person's sleeping hours (or within `lead` hours before them).
+func bedtime(lead := 0.0) -> bool:
+	var h: float = game.hour()
+	var e := _early()
+	return h >= Defs.BEDTIME[_stage] - e - lead or h < Defs.WAKE - e
+
+
+## True on a work or school day until the shift starts.
+func _shift_ahead() -> bool:
+	var c = sched()
+	return c != null and game.day % 7 < 5 and game.hour() < c["start"]
+
+
+## Where this person is drawn, which the step-aside lean can move off their tile.
+func shown_pos() -> Vector3:
+	return position + dodge if pose == "stand" else position
+
+
+## Hours by which this person's day runs early, so an early shift still leaves a morning.
+func _early() -> float:
+	var c = sched()
+	var morning: int = game.day + (1 if game.hour() >= 12.0 else 0)
+	if c == null or morning % 7 >= 5:
+		return 0.0
+	return maxf(0.0, Defs.WAKE + Defs.MORNING - (c["start"] - Defs.COMMUTE))
+
+
+## Children cannot cook, and nobody cooks when about to leave for work, so at
+## mealtimes a snack is their meal.
+func _snack_meal() -> bool:
+	return mealtime() and (_stage == "child" or _no_time_to_cook())
+
+
+func _no_time_to_cook() -> bool:
+	var c = sched()
+	if c == null or game.day % 7 >= 5:
+		return false
+	var left: float = c["start"] - Defs.COMMUTE - game.hour()
+	return left > 0.0 and left < Defs.MEAL_TIME
+
+
+## True during a mealtime in which this person has not yet eaten a meal.
+func mealtime() -> bool:
+	var h: float = game.hour()
+	for i in Defs.MEALS.size():
+		var from: float = Defs.MEALS[i][0] - (_early() if i == 0 else 0.0)
+		if h >= from and h < Defs.MEALS[i][1]:
+			return meal_t < game.day * 1440.0 + from * 60.0 - 90.0  # a meal just before counts
+	return false
 
 
 # ---------------------------------------------------------------- simulation
@@ -462,6 +532,7 @@ func _decay(dh: float) -> void:
 			continue
 		var r: float = -Defs.DECAY[n]
 		match n:
+			"hunger": r *= 0.8 if _stage == "child" else 1.0  # children can only snack
 			"hygiene": r *= 1.25 - traits.neat * 0.05
 			"social": r *= 0.6 + traits.outgoing * 0.08
 			"fun": r *= 0.7 + traits.playful * 0.06
@@ -614,8 +685,10 @@ func _arrive(a: Dictionary) -> void:
 					rates["comfort"] = seat.def.get("comfort", 25.0)
 			elif o != null and o.def.has("slots"):
 				_pose_slot(o, it.get("pose", "stand"), o.def.get("face_back", false))
-			elif o != null:
-				face(o.position)
+			else:
+				a.spot = true
+				if o != null:
+					face(o.position)
 			a.posed = true
 			var dur: float = it.get("dur", 1.0)
 			if it["id"] == "cook":
@@ -627,6 +700,8 @@ func _arrive(a: Dictionary) -> void:
 			a.t = 0.0
 			a.state = "do"
 			_loop(it.get("snd", ""))
+			if a.get("spot", false):
+				_make_room()
 		"social":
 			var o: Person = a.other
 			if not is_instance_valid(o) or o.away or o.dead:
@@ -666,6 +741,19 @@ func _arrive(a: Dictionary) -> void:
 			a.state = "away"
 
 
+## People standing at the same spot (two cooks at one stove) line up side by side
+## rather than inside each other.
+func _make_room() -> void:
+	var here: Array = game.present(world).filter(func(p): return p.tile == tile and p.cur != null \
+			and p.cur.state == "do" and p.cur.get("spot", false))
+	if here.size() < 2:
+		return
+	var side := Vector3(cos(rotation.y), 0, -sin(rotation.y))
+	var gap := minf(0.5, 0.9 / here.size())
+	for i in here.size():
+		here[i].position = world.tile_center(tile) + side * (i - (here.size() - 1) / 2.0) * gap
+
+
 func receive_social(from: Person, src: Dictionary) -> void:
 	if cur != null:
 		var c: Dictionary = cur
@@ -697,6 +785,14 @@ func _do(a: Dictionary, dh: float) -> void:
 	var u: String = it.get("until", "")
 	if u != "" and needs[u] >= 99.5:
 		done = true
+	if it.get("id", "") == "sleep":
+		if bedtime():
+			# Rule: nobody in bed gets up in the small hours just because they are rested.
+			a.night = true
+			done = false
+		elif a.get("night", false) and _shift_ahead():
+			# Rule: on a work day the night ends at the wake time, rested or not.
+			done = true
 	if it.get("sleep", false) and a.kind != "passout" and (needs.hunger < 8.0 or needs.bladder < 8.0):
 		done = true
 	if done:
@@ -754,6 +850,8 @@ func _finish(a: Dictionary, ok: bool) -> void:
 				"out":
 					_to_street()
 		"use", "eat":
+			if a.kind == "eat" or (it["id"] == "snack" and _snack_meal()):
+				meal_t = game.minutes
 			match it.get("special", ""):
 				"job":
 					game.assign_job(self)
@@ -802,13 +900,10 @@ func go_to_work() -> void:
 
 
 func _tick_away(dh: float) -> void:
-	needs.hunger = maxf(20.0, needs.hunger - 3.0 * dh)
-	needs.energy = maxf(10.0, needs.energy - 4.5 * dh)
-	needs.fun = maxf(10.0, needs.fun - 3.0 * dh)
-	needs.hygiene = maxf(20.0, needs.hygiene - 2.5 * dh)
-	needs.comfort = maxf(20.0, needs.comfort - 2.0 * dh)
-	needs.social = minf(100.0, needs.social + 3.0 * dh)
-	needs.bladder = maxf(45.0, needs.bladder - 3.0 * dh)
+	for n in Defs.AWAY:
+		var r: float = Defs.AWAY[n][0]
+		var stop: float = Defs.AWAY[n][1]
+		needs[n] = minf(stop, needs[n] + r * dh) if r > 0.0 else maxf(minf(stop, needs[n]), needs[n] + r * dh)
 	var c = sched()
 	var h: float = game.hour()
 	if c != null and h < c["start"] + c["hours"] and h >= c["start"] - 1.5:
@@ -984,9 +1079,11 @@ func _score(g: Dictionary, it: Dictionary) -> float:
 			s += 7.0
 	if it.get("special", "") == "job":
 		s += 18.0
+	# Rule: at mealtime the meal comes first, ahead of anything that is not urgent.
+	if (it["id"] == "meal" and mealtime()) or (it["id"] == "snack" and _snack_meal()):
+		s += 60.0
 	if it.get("sleep", false):
-		var h: float = game.hour()
-		if h >= 21.0 or h < 5.0:
+		if bedtime():
 			s *= 2.5
 	return s
 
@@ -1092,6 +1189,56 @@ func _animate(ds: float) -> void:
 			ar = -2.4 + cos(anim_t * 6.0) * 0.5
 	arm_l.rotation.x = al
 	arm_r.rotation.x = ar
+	_dodge(ds, walking)
+
+
+## Purely for show: someone walking leans aside when about to pass through another
+## person, someone standing idle leans the other way to let a walker by, and two people
+## stopped on one spot shuffle apart. Tiles and paths are not involved, so two people
+## heading the same way can still share a route.
+func _dodge(ds: float, walking: bool) -> void:
+	var want := Vector3.ZERO
+	if pose == "stand" and world == game.world and (walking or cur == null):
+		for p in game.everyone():
+			if p == self or p.world != world or p.away:
+				continue
+			var p_walking: bool = p.cur != null and p.cur.state == "walk"
+			var dist: float = (p.position - position).length()
+			if dist >= DODGE_R:
+				continue
+			if not walking and not p_walking:
+				# Two people stopped on the same spot shuffle apart.
+				if dist < DODGE and p.pose == "stand":
+					want = Vector3(DODGE if pid < p.pid else -DODGE, 0, 0)
+				continue
+			var near := DODGE * clampf((DODGE_R - dist) / (DODGE_R * 0.5), 0.0, 1.0)
+			# A walker picks the side; whoever is standing in the way mirrors it.
+			var w: Vector3 = _lean(p) * near if walking else -p._lean(self) * near
+			if w.length() > want.length():
+				want = w
+	dodge = dodge.move_toward(want, 2.5 * ds)
+	if pose == "stand":
+		body.position.x = dodge.dot(_right())
+		body.position.z = dodge.dot(Vector3(sin(rotation.y), 0, cos(rotation.y)))
+
+
+func _right() -> Vector3:
+	return Vector3(cos(rotation.y), 0, -sin(rotation.y))
+
+
+## Unit vector, in the world, that this person leans along to pass `p`; zero if `p` is
+## not in the way.
+func _lean(p: Person) -> Vector3:
+	var lat: float = (p.position - position).dot(_right())
+	if absf(lat) > 0.6:
+		return Vector3.ZERO
+	var side := -signf(lat)
+	if absf(lat) < 0.08:
+		# Dead ahead or behind: meeting head-on both keep to the same hand, otherwise
+		# the two split to opposite sides.
+		var head_on := sin(rotation.y - p.rotation.y + PI / 2.0) < 0.0
+		side = 1.0 if head_on or pid < p.pid else -1.0
+	return _right() * side
 
 
 # ---------------------------------------------------------------- persistence
@@ -1106,6 +1253,7 @@ func save_state() -> Dictionary:
 		"pid": pid, "seed": seed_v, "household": household, "name": pname, "resident": resident, "age": age, "lifespan": lifespan,
 		"look": lk, "needs": needs, "traits": traits, "skills": skills, "job": job, "tile": [t.x, t.y],
 		"away": away and at_home, "work_day": work_day, "work_flag_day": work_flag_day, "starve_t": starve_t,
+		"meal_t": meal_t,
 	}
 
 
@@ -1129,6 +1277,7 @@ func load_state(d: Dictionary) -> void:
 	work_day = int(d["work_day"])
 	work_flag_day = int(d["work_flag_day"])
 	starve_t = d.get("starve_t", 0.0)
+	meal_t = d.get("meal_t", meal_t)
 	_stage = stage()
 	_build()
 	if true:

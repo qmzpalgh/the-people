@@ -2,6 +2,8 @@ class_name Sfx
 extends Node
 ## Procedural audio. Every sound is synthesised into a sample buffer at startup.
 
+## Audio is switched off for now. Set this to true to bring every sound back.
+const ENABLED := false
 const RATE := 16000
 
 var streams := {}
@@ -15,6 +17,9 @@ var _lp := 0.0
 
 
 func _ready() -> void:
+	if not ENABLED:
+		muted = true
+		return
 	_rng.seed = 20240
 	_generate()
 	for i in 6:
@@ -48,6 +53,8 @@ func get_stream(n: String) -> AudioStream:
 
 
 func play(n: String, db := -8.0) -> void:
+	if not ENABLED:
+		return
 	for p in _pool:
 		if not p.playing:
 			p.stream = streams[n]
@@ -57,6 +64,8 @@ func play(n: String, db := -8.0) -> void:
 
 
 func play_at(n: String, pos: Vector3, db := 0.0, pitch := 1.0) -> void:
+	if not ENABLED:
+		return
 	for p in _pool3:
 		if not p.playing:
 			p.stream = streams[n]
@@ -69,11 +78,15 @@ func play_at(n: String, pos: Vector3, db := 0.0, pitch := 1.0) -> void:
 
 ## 1 = full day (birdsong), 0 = night (crickets).
 func set_day(f: float) -> void:
+	if not ENABLED:
+		return
 	_birds.volume_db = linear_to_db(maxf(0.001, f * 0.5))
 	_crickets.volume_db = linear_to_db(maxf(0.001, (1.0 - f) * 0.6))
 
 
 func set_muted(m: bool) -> void:
+	if not ENABLED:
+		return
 	muted = m
 	AudioServer.set_bus_mute(0, m)
 

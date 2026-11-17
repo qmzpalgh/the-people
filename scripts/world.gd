@@ -792,6 +792,8 @@ func _gen_garden() -> void:
 			add_object("flowers", t.x, t.y, 0)
 
 
+## Empty tiles in rooms of this type that can be walked to from the front door, so
+## nobody is put down in a corner that furniture has boxed in.
 func free_tiles_in(type: String) -> Array:
 	var out := []
 	for rm in rooms:
@@ -800,8 +802,11 @@ func free_tiles_in(type: String) -> Array:
 		var r: Rect2i = rm["rect"]
 		for y in range(r.position.y, r.end.y):
 			for x in range(r.position.x, r.end.x):
-				if not occ.has(Vector2i(x, y)):
-					out.append(Vector2i(x, y))
+				var t := Vector2i(x, y)
+				if not occ.has(t) and path(door_tile, t) != null:
+					out.append(t)
+	if out.is_empty():
+		out.append(door_tile)
 	return out
 
 
