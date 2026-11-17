@@ -39,6 +39,7 @@ var queue_box: HFlowContainer
 var needs_box: GridContainer
 var bars := {}
 var info_l: Label
+var stage_box: HBoxContainer
 var tab_btns := {}
 var card_tab := ""
 var side: PanelContainer
@@ -102,9 +103,15 @@ func _ready() -> void:
 	var cv := VBoxContainer.new()
 	cv.add_theme_constant_override("separation", 6)
 	card.add_child(cv)
-	var head := _hbox(cv, 2)
+	# The stage chip drops under the name when both don't fit on one line.
+	var head := HFlowContainer.new()
+	head.add_theme_constant_override("h_separation", 8)
+	head.add_theme_constant_override("v_separation", 2)
+	cv.add_child(head)
 	name_l = _label(head, "", 17)
 	name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	stage_box = _hbox(head, 0)
+	stage_box.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	act_l = _label(cv, "", 13)
 	act_l.add_theme_color_override("font_color", MUTED)
 	mood_bar = _bar(cv, 0, 6)
@@ -440,6 +447,12 @@ func debug_open(what: String) -> void:
 	for t in CARD_TABS:
 		if what.contains("tab:" + t):
 			card_tab = t
+	# pick:<n> selects the n-th household member, counting from 1.
+	var pick := what.find("pick:")
+	if pick >= 0:
+		var n := what.substr(pick + 5, 1).to_int() - 1
+		if n >= 0 and n < game.people.size():
+			game.select(game.people[n])
 	if what.contains("help"):
 		toggle_help()
 	if what.contains("floors"):
@@ -616,6 +629,9 @@ func _refresh_card() -> void:
 	if s == null or not is_instance_valid(s):
 		return
 	name_l.text = s.pname
+	if _changed("stage", _stage_words(s)):
+		_clear(stage_box)
+		_chip(stage_box, _sig["stage"], MUTED)
 	act_l.text = s.activity()
 	_set_bar(mood_bar, s.mood())
 	for t in tab_btns:
@@ -655,7 +671,7 @@ func _refresh_card() -> void:
 		for n in Defs.NEEDS:
 			_set_bar(bars[n], s.needs[n])
 	if info_l.visible:
-		var lines := [s.stage_text()]
+		var lines := []
 		if s.job != null:
 			var c: Dictionary = Defs.CAREERS[s.job.career]
 			lines.append("%s, $%d a day, %d:00 to %d:00 on weekdays" % [c["titles"][s.job.level], c["pay"][s.job.level],
@@ -710,3 +726,14 @@ func _tab(parent: Node, t: String) -> Button:
 
 func _pick_card_tab(t: String) -> void:
 	card_tab = "" if card_tab == t else t
+
+
+## The life stage and age, for the chip beside the name.
+func _stage_words(s: Person) -> String:
+	match s.stage():
+		"child":
+			var left := ceili(Defs.CHILD_DAYS - s.age)
+			return "Child, grows up in %d %s" % [left, "day" if left == 1 else "days"]
+		"elder":
+			return "Elder, day %d" % int(s.age)
+	return "Adult, day %d" % int(s.age)
