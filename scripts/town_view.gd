@@ -29,26 +29,36 @@ func _init(g: Node = null, t: Town = null) -> void:
 
 
 func _ready() -> void:
-	var cols := ceili(town.lots.size() / float(BOTH))
-	var length := cols * PITCH
-	var mid := length / 2.0 - PITCH / 2.0
-	_street(length, mid)
 	hud = UITown.new(game)
 	add_child(hud)
+	cam = Cam.new()
+	cam.yaw = 0.0
+	cam.pitch = 0.75
+	cam.max_dist = 260.0
+	cam.min_pos = Vector2(-20.0, -40.0)
+	add_child(cam)
+	_build()
+	var length := _length()
+	cam.dist = clampf(length * 1.3, 60.0, 250.0)
+	cam.position = Vector3(length / 2.0 - PITCH / 2.0, 0, 0)
+
+
+func _length() -> float:
+	return ceili(town.lots.size() / float(BOTH)) * PITCH
+
+
+## Draws the street, the plates, the houses and the labels from the town record and the
+## worlds as they are now.
+func _build() -> void:
+	var length := _length()
+	var mid := length / 2.0 - PITCH / 2.0
+	_street(length, mid)
 	_hover_n = _marker(Color(UI.GOLD, 0.15))
 	_pick_n = _marker(Color(1, 1, 1, 0.3))
 	_home_n = _ring(UI.GOLD)
 	for l in town.lots:
 		_plate(l)
-	cam = Cam.new()
-	cam.yaw = 0.0
-	cam.pitch = 0.75
-	cam.dist = clampf(length * 1.3, 60.0, 250.0)
-	cam.max_dist = 260.0
-	cam.min_pos = Vector2(-20.0, -40.0)
 	cam.max_pos = Vector2(length, 40.0)
-	add_child(cam)
-	cam.position = Vector3(mid, 0, 0)
 	if OS.has_environment("TP_SHOT"):
 		for id in houses:
 			var h: Node3D = houses[id]
@@ -56,6 +66,21 @@ func _ready() -> void:
 			var bd: float = (h.get_child(0) as MeshInstance3D).mesh.size.z
 			print("lot %d side %s: house front to road edge %.1f, back to far edge %.1f" % [id, "S" if g.z > 0 else "N", absf(g.z) - ROAD / 2.0 - WALK - bd / 2.0, World.H - (absf(g.z) - ROAD / 2.0 - WALK) - bd / 2.0])
 		print("town view: %d plates for %d lots, %d houses for %d home and vacant lots" % [plates.size(), town.lots.size(), houses.size(), town.lots.filter(func(l): return l["kind"] != "empty").size()])
+
+
+## Draws the town again, so it matches the record and the worlds, and opens the player's
+## card. The camera stays where it is.
+func refresh() -> void:
+	for c in get_children():
+		if c != hud and c != cam:
+			c.free()
+	plates.clear()
+	houses.clear()
+	labels.clear()
+	hover = -1
+	picked = -1
+	_build()
+	open_home()
 
 
 ## A flat tint the size of a lot, moved onto the lot that is hovered or picked.

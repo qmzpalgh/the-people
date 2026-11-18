@@ -21,7 +21,7 @@ const CONTROLS := [
 	["Right-click or Esc", "Put the current tool away"], ["W A S D", "Move the camera"],
 	["Q / E, middle-drag", "Turn the camera"], ["Mouse wheel", "Zoom"], ["Tab", "Next household member"],
 	["Space, 1 2 3", "Pause and speed"], ["R", "Rotate furniture"], ["F", "Walls up or down"],
-	["F5 / F9", "Save / load"], ["H", "Show or hide this list"],
+	["T", "Back to the town"], ["F5 / F9", "Save / load"], ["H", "Show or hide this list"],
 ]
 
 var game
@@ -103,6 +103,8 @@ func _ready() -> void:
 	var trh := _hbox(tr, 2)
 	for m in ["live", "buy", "build"]:
 		mode_btns[m] = _seg(trh, m.capitalize(), game.set_mode.bind(m))
+	var tb := _btn(trh, "Town", game.go_town)
+	tb.add_theme_color_override("font_color", MUTED)
 	var mb := _btn(trh, "Menu", _open_options)
 	mb.add_theme_color_override("font_color", MUTED)
 

@@ -184,6 +184,8 @@ func _ready() -> void:
 		# A normal launch opens on the town. TP_BOOT lets a test run do the same.
 		town_view.open_home()
 		set_screen("town")
+	if OS.has_environment("TP_TOWN_TRIP"):
+		add_child(TownTrip.new(self))
 
 
 func _make_person(id: int, sv: int, fam: String, hh: Household, spec := {}) -> Person:
@@ -653,6 +655,17 @@ func set_speed(s: int) -> void:
 		p.loop_p.stream_paused = s == 0
 
 
+## Leaves the lot for the town: a quiet save, Buy or Build put away, and the town drawn
+## again from the record, so it shows what play has changed.
+func go_town() -> void:
+	if screen == "town":
+		return
+	set_mode("live")
+	save_game(true)
+	town_view.refresh()
+	set_screen("town")
+
+
 ## Lists what each screen shows: the lot with its HUD and camera, and the town view with its
 ## own camera.
 func _build_screens() -> void:
@@ -865,6 +878,7 @@ func _unhandled_input(e: InputEvent) -> void:
 			KEY_R: buy_rot = (buy_rot + 1) % 4
 			KEY_F: toggle_walls()
 			KEY_H: ui.toggle_help()
+			KEY_T: go_town()
 			KEY_M: sfx.set_muted(not sfx.muted)
 			KEY_F5: save_game()
 			KEY_F9: load_game()
