@@ -11,3 +11,8 @@ var player := false
 ## True once this household has been shown the build-session hint for a bare lot, so it is
 ## shown only once. Saved as the optional key "build_hint".
 var build_hint := false
+## "own" or "rent". A renter pays `rent` with every three-day bill: a share of the home's
+## value (Defs.RENT_SHARE), fixed at move-in so the furniture they buy does not raise it.
+## Both are saved as optional keys.
+var tenure := "own"
+var rent := 0

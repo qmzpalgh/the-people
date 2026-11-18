@@ -269,3 +269,6 @@ const START_FUNDS := 13750
 ## What an empty lot costs. About a sixth of a typical (median) home: a real cost, but well
 ## under the price of the house that goes on it.
 const LOT_PRICE := 2000
+## The share of a home's value (World.value() at move-in) that a renter pays each three-day
+## bill period.
+const RENT_SHARE := 0.01

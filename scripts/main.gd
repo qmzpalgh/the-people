@@ -125,6 +125,9 @@ func _ready() -> void:
 	world.setup(home_seed, data["households"][0]["world"] if data != null else null, lot_kind == "empty")
 	if lot_kind.begins_with("vacant:"):
 		_move_into_vacant.call_deferred(home_seed)  # once the town has its vacant lots
+		if OS.has_environment("TP_RENT"):  # rent the home rather than own it
+			home.tenure = "rent"
+			home.rent = int(world.value() * Defs.RENT_SHARE)
 	if OS.has_environment("TP_TEST") and (lot_kind != "" or OS.has_environment("TP_MONEY")):
 		(func(): print("START funds $%d, lot price $%d, starting money $%d (START_FUNDS $%d)" % [money + _lot_paid(), _lot_paid(), money, Defs.START_FUNDS])).call_deferred()
 	if OS.has_environment("TP_TEST") and (lot_kind != "" or OS.has_environment("TP_PRICES")):
@@ -490,9 +493,13 @@ func _new_day() -> void:
 			for o in hh.world.objects:
 				value += o.def["price"]
 			var bill := int(value * 0.03) + 25 * household_of(hh.id).size()
-			hh.money -= bill
+			var rent: int = hh.rent if hh.tenure == "rent" else 0
+			var before: int = hh.money
+			hh.money -= bill + rent
 			if hh.player:
-				msg("Bills paid: $%d." % bill)
+				msg("Bills paid: $%d." % bill if rent == 0 else "Bills paid: $%d, and rent: $%d." % [bill, rent])
+				if _test_days > 0 and lot_kind != "":
+					print("BILLS day %d: money before $%d, bills $%d, rent $%d, money after $%d" % [day, before, bill, rent, hh.money])
 	if _test_days == 0 and _shot == "":
 		save_game(true)
 
@@ -784,7 +791,7 @@ func save_game(quiet := false) -> void:
 	var hhs := []
 	for id in households:  # the player's household (id 0) was added first
 		var hh: Household = households[id]
-		hhs.append({"id": hh.id, "family": hh.family, "money": hh.money, "build_hint": hh.build_hint, "world": hh.world.save_state()})
+		hhs.append({"id": hh.id, "family": hh.family, "money": hh.money, "build_hint": hh.build_hint, "tenure": hh.tenure, "rent": hh.rent, "world": hh.world.save_state()})
 	var d := {
 		"v": 2, "seed": seed_base, "minutes": minutes, "rel": rel,
 		"next_pid": next_pid, "next_hh": next_hh, "welcomed": welcomed, "pending": pending, "free_will": free_will,
@@ -820,6 +827,8 @@ func _load_household(d: Dictionary) -> void:
 		hh.family = hd["family"]
 		hh.money = int(hd["money"])
 		hh.build_hint = bool(hd.get("build_hint", false))
+		hh.tenure = str(hd.get("tenure", "own"))
+		hh.rent = int(hd.get("rent", 0))
 	family = home.family
 	for pc in d.get("pending", []):
 		pending.append({"at": float(pc["at"]), "hh": int(pc["hh"]), "a": int(pc["a"]), "b": int(pc["b"])})
