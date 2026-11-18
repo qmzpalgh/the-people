@@ -32,6 +32,8 @@ var chips_box: HBoxContainer
 var stage_btns: Array = []
 var skin_btns: Array = []
 var hair_btns: Array = []
+var shirt_btns: Array = []
+var pants_btns: Array = []
 var _frames := 0
 var _after_done := false
 
@@ -101,6 +103,8 @@ func setup(g) -> Array:
 		style_btns.append(ui._seg(hrow, Defs.HAIR_STYLES[i], set_style.bind(i)))
 	skin_btns = _swatches(box, "Skin", Defs.SKIN_TONES, set_skin)
 	hair_btns = _swatches(box, "Hair colour", Defs.HAIR_COLOURS, set_hair)
+	shirt_btns = _swatches(box, "Shirt", Defs.SHIRT_COLOURS, set_shirt)
+	pants_btns = _swatches(box, "Trousers", Defs.TROUSER_COLOURS, set_pants)
 	why_l = ui._label(box, "", 12)
 	why_l.add_theme_color_override("font_color", UI.MUTED)
 	why_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -132,6 +136,10 @@ func setup(g) -> Array:
 			var p := kv.split("=")
 			if p[0] == "style":
 				set_style(int(p[1]))
+			elif p[0] == "shirt":
+				set_shirt(int(p[1]))
+			elif p[0] == "pants":
+				set_pants(int(p[1]))
 			elif p[0] == "skin":
 				set_skin(int(p[1]))
 			elif p[0] == "hair":
@@ -276,6 +284,16 @@ func set_style(i: int) -> void:
 	_select(sel)
 
 
+func set_shirt(i: int) -> void:
+	members[sel]["look"]["shirt"] = Defs.SHIRT_COLOURS[i]
+	_select(sel)
+
+
+func set_pants(i: int) -> void:
+	members[sel]["look"]["pants"] = Defs.TROUSER_COLOURS[i]
+	_select(sel)
+
+
 func set_skin(i: int) -> void:
 	members[sel]["look"]["skin"] = Defs.SKIN_TONES[i]
 	_select(sel)
@@ -316,6 +334,8 @@ func _refresh() -> void:
 	remove_b.disabled = members.size() <= 1
 	_style_swatches(skin_btns, Defs.SKIN_TONES, m["look"]["skin"])
 	_style_swatches(hair_btns, Defs.HAIR_COLOURS, m["look"]["hair"])
+	_style_swatches(shirt_btns, Defs.SHIRT_COLOURS, m["look"]["shirt"])
+	_style_swatches(pants_btns, Defs.TROUSER_COLOURS, m["look"]["pants"])
 	_rebuild_chips()
 	var why := _problem()
 	done_b.disabled = why != ""

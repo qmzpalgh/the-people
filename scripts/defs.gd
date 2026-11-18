@@ -52,6 +52,9 @@ const SKILLS := ["cooking", "logic", "creativity", "fitness", "charisma"]
 const SKIN_TONES := [Color(0.96, 0.8, 0.68), Color(0.87, 0.67, 0.5), Color(0.72, 0.5, 0.35), Color(0.52, 0.35, 0.24), Color(0.36, 0.24, 0.17)]
 const HAIR_COLOURS := [Color(0.1, 0.08, 0.07), Color(0.35, 0.22, 0.12), Color(0.75, 0.6, 0.3), Color(0.6, 0.25, 0.12), Color(0.3, 0.4, 0.7)]
 const HAIR_STYLES := ["Cropped", "Long", "Bun", "Flat top"]
+## Clothes the creator offers. Random people keep any hue; these are only the choices on offer.
+static var SHIRT_COLOURS: Array = range(8).map(func(i): return Color.from_hsv(i / 8.0, 0.6, 0.8))
+static var TROUSER_COLOURS: Array = range(6).map(func(i): return Color.from_hsv(i / 6.0, 0.35, 0.4)) + [Color(0.12, 0.12, 0.14)]
 ## Skills run 0..10. An interaction's "skill" rate is levels per game hour at level 0;
 ## each level already held makes the next one take SKILL_SLOWDOWN of a first level
 ## longer (see skill_pace). SCHOOL_LOGIC is the practice a school day is worth.
