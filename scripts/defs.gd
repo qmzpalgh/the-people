@@ -56,6 +56,15 @@ const HAIR_STYLES := ["Cropped", "Long", "Bun", "Flat top"]
 ## Trait points. Every trait runs 1 to 9 (as Person.roll draws it); a member's five add up to at most TRAIT_BUDGET,
 ## which is the average of a random person.
 const TRAIT_BUDGET := 25
+## What each trait does in the game, in a player's words (shown as tooltips in the creator).
+const TRAIT_HINTS := {
+	"neat": "Neat people get dirty more slowly and are keener to wash. Messy people let hygiene slide and are less bothered by it.",
+	"outgoing": "Outgoing people crave company and go looking for a chat, but they also get lonely faster. Shy people are happy alone, and chats with them land less often.",
+	"active": "Active people tire more slowly and are more likely to practise skills. Laid-back people tire sooner and are less drawn to practice.",
+	"playful": "Playful people get bored faster and jump at anything fun. Serious people stay content for longer, and jokes land less often with them.",
+	"nice": "Nice people take compliments and hugs warmly and never start an insult. Grumpy ones (3 or less) may insult people they have fallen out with.",
+}
+
 ## Body size ranges, as Person.roll draws them: look.h scales height, look.wide scales width.
 const HEIGHT_RANGE := Vector2(0.9, 1.08)
 const WIDTH_RANGE := Vector2(0.9, 1.15)

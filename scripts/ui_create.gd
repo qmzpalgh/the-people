@@ -382,6 +382,9 @@ func _trait_row(box: Node, t: String) -> HSlider:
 	lo.custom_minimum_size.x = 62
 	lo.add_theme_color_override("font_color", UI.MUTED)
 	var s := _make_slider(1.0, 9.0, 1.0)
+	s.tooltip_text = Defs.TRAIT_HINTS[t]
+	lo.tooltip_text = Defs.TRAIT_HINTS[t]
+	lo.mouse_filter = Control.MOUSE_FILTER_STOP  # labels ignore the mouse by default, which hides tooltips
 	s.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	s.value_changed.connect(func(v): set_trait(t, int(v)))
 	row.add_child(s)
@@ -389,6 +392,10 @@ func _trait_row(box: Node, t: String) -> HSlider:
 	hi.custom_minimum_size.x = 62
 	hi.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	hi.add_theme_color_override("font_color", UI.MUTED)
+	hi.tooltip_text = Defs.TRAIT_HINTS[t]
+	hi.mouse_filter = Control.MOUSE_FILTER_STOP
+	if OS.has_environment("TP_SHOT"):
+		print("CREATE tooltip %s: %s" % [t, s.tooltip_text])
 	return s
 
 
