@@ -128,8 +128,9 @@ func _ready() -> void:
 		if OS.has_environment("TP_RENT"):  # rent the home rather than own it
 			home.tenure = "rent"
 			home.rent = int(world.value() * Defs.RENT_SHARE)
+			(func(): msg("Paid a deposit of $%d." % _deposit_paid())).call_deferred()  # once the HUD is up
 	if OS.has_environment("TP_TEST") and (lot_kind != "" or OS.has_environment("TP_MONEY")):
-		(func(): print("START funds $%d, lot price $%d, starting money $%d (START_FUNDS $%d)" % [money + _lot_paid(), _lot_paid(), money, Defs.START_FUNDS])).call_deferred()
+		(func(): print("START funds $%d, lot price $%d, deposit $%d, starting money $%d (START_FUNDS $%d)" % [money + _lot_paid() + _deposit_paid(), _lot_paid(), _deposit_paid(), money, Defs.START_FUNDS])).call_deferred()
 	if OS.has_environment("TP_TEST") and (lot_kind != "" or OS.has_environment("TP_PRICES")):
 		_print_prices.call_deferred()
 	# TP_SESSION applies the build session on any start, a loaded one included, for tests.
@@ -227,11 +228,12 @@ func _make_person(id: int, sv: int, fam: String, hh: Household, spec := {}) -> P
 
 ## A random household for a new game: {family, money, members: [{name, age, look, traits}]}.
 ## `name` is a first name; `look` and `traits` have the shapes a Person keeps in memory.
-## `money` is optional and wins when present. It is left out on a lot with no house, so that
-## start_household gives the household START_FUNDS. TP_MONEY sets it, for tests.
+## `money` is optional and wins when present. It is left out for a household on a lot with no
+## house or renting its home, so that start_household gives it START_FUNDS. TP_MONEY sets
+## it, for tests.
 func random_spec() -> Dictionary:
 	var spec := {"family": Defs.surname(rng), "money": Household.new().money, "members": []}
-	if _houses_itself():
+	if _gets_start_funds():
 		spec.erase("money")
 	if OS.has_environment("TP_MONEY"):
 		spec["money"] = int(OS.get_environment("TP_MONEY"))
@@ -257,8 +259,8 @@ func _rng_for(sv: int) -> RandomNumberGenerator:
 func start_household(spec: Dictionary) -> void:
 	family = spec["family"]
 	home.family = family
-	home.money = int(spec["money"]) if spec.has("money") else (Defs.START_FUNDS if _houses_itself() else Household.new().money)
-	home.money -= _lot_paid()
+	home.money = int(spec["money"]) if spec.has("money") else (Defs.START_FUNDS if _gets_start_funds() else Household.new().money)
+	home.money -= _lot_paid() + _deposit_paid()
 	var spots := world.arrival_tiles()
 	for i in spec["members"].size():
 		var p := _make_person(i, _member_seed(i), family, home, spec["members"][i])
@@ -1199,6 +1201,20 @@ func _houses_itself() -> bool:
 ## which stands in for buying an empty lot until the town sells them (N2); nothing otherwise.
 func _lot_paid() -> int:
 	return Defs.LOT_PRICE if lot_kind == "empty" else 0
+
+
+## True when a new household starts from START_FUNDS rather than Household's $2,500: on a
+## lot with no house, or renting its home. A household that owns a generated home it moves
+## into keeps $2,500 until N4 decides what buying a home costs.
+func _gets_start_funds() -> bool:
+	return _houses_itself() or (home != null and home.tenure == "rent")
+
+
+## The deposit paid on moving in: one rent period for a TP_LOT=vacant rental (TP_RENT), which
+## stands in for renting from the town until it lets homes (N3); nothing otherwise. Not saved:
+## it is always one period of the saved rent, and nothing after the start reads it.
+func _deposit_paid() -> int:
+	return home.rent if lot_kind.begins_with("vacant:") and home.tenure == "rent" else 0
 
 
 ## TP_PRICES (or any TP_LOT) under TP_TEST: one line with the funds, the lot price and the
