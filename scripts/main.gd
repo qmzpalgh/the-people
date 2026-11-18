@@ -7,6 +7,7 @@ const MULT := [0.0, 1.0, 4.0, 12.0]
 const Probe := preload("res://scripts/probe.gd")
 
 static var skip_load := false
+static var new_spec := {}  # a household made in the creator, carried across the reload
 static var _run := 0
 static var _probe: RefCounted
 
@@ -150,7 +151,7 @@ func _ready() -> void:
 	if data != null:
 		_load_household(data)
 	else:
-		start_household(random_spec())
+		start_household(_take_spec())
 	if data != null and data.has("town"):
 		town = Town.from_dict(data["town"])
 	else:
@@ -172,6 +173,7 @@ func _ready() -> void:
 	ui.game = self
 	add_child(ui)
 	_build_screens()
+	screens["create"] = _make_create()
 	if not people.is_empty():
 		select(people[0])
 	world.update_room_scores()
@@ -194,7 +196,7 @@ func _ready() -> void:
 		sfx.set_muted(true)
 		if data == null:
 			for p in people:
-				if p.pid != 0:
+				if p.pid != 0 and p.stage() == "adult":
 					assign_job(p)
 			if people.size() >= 2:
 				add_rel(people[0], people[1], 80.0)
@@ -274,7 +276,7 @@ func start_household(spec: Dictionary) -> void:
 	for a in people:
 		for b in people:
 			if a.pid < b.pid:
-				rel[_rk(a, b)] = rng.randf_range(5.0, 45.0)
+				rel[_rk(a, b)] = _spec_rel(spec, a.pid, b.pid, rng.randf_range(5.0, 45.0))
 	next_pid = 100
 	for i in 3:
 		_new_family(rng.randi_range(1, 3), true)
@@ -866,6 +868,32 @@ func load_game() -> void:
 func new_game() -> void:
 	skip_load = true
 	get_tree().reload_current_scene()
+
+
+## The household made in the creator, if there is one; otherwise a random one.
+func _take_spec() -> Dictionary:
+	if new_spec.is_empty():
+		return random_spec()
+	var s := new_spec
+	new_spec = {}
+	return s
+
+
+## The starting relationship of members `a` and `b` (indexes into the spec): the value of the kind
+## the spec chose for the pair, or `drawn`. The random draw is made for every pair either way.
+func _spec_rel(spec: Dictionary, a: int, b: int, drawn: float) -> float:
+	for r in spec.get("rels", []):
+		if int(r["a"]) == a and int(r["b"]) == b and Defs.REL_KINDS.has(r["kind"]):
+			return Defs.REL_KINDS[r["kind"]]
+	return drawn
+
+
+## The creator's nodes, hidden until the `create` screen is shown.
+func _make_create() -> Array:
+	var nodes: Array = load("res://scripts/ui_create.gd").new().setup(self)
+	for n in nodes:
+		_show_node(n, false)
+	return nodes
 
 
 # ---------------------------------------------------------------- picking

@@ -99,12 +99,10 @@ static func roll(rng: RandomNumberGenerator, is_resident := true) -> Dictionary:
 		r["needs"][n] = rng.randf_range(55.0, 90.0)
 	for t in Defs.TRAITS:
 		r["traits"][t] = rng.randi_range(1, 9)
-	var skin_tones := [Color(0.96, 0.8, 0.68), Color(0.87, 0.67, 0.5), Color(0.72, 0.5, 0.35), Color(0.52, 0.35, 0.24), Color(0.36, 0.24, 0.17)]
-	var hair_cols := [Color(0.1, 0.08, 0.07), Color(0.35, 0.22, 0.12), Color(0.75, 0.6, 0.3), Color(0.6, 0.25, 0.12), Color(0.3, 0.4, 0.7)]
 	r["look"] = {
-		"skin": skin_tones[rng.randi() % skin_tones.size()], "hair": hair_cols[rng.randi() % hair_cols.size()],
+		"skin": Defs.SKIN_TONES[rng.randi() % Defs.SKIN_TONES.size()], "hair": Defs.HAIR_COLOURS[rng.randi() % Defs.HAIR_COLOURS.size()],
 		"shirt": Color.from_hsv(rng.randf(), 0.6, 0.8), "pants": Color.from_hsv(rng.randf(), 0.35, 0.4),
-		"style": rng.randi() % 4, "h": rng.randf_range(0.9, 1.08), "wide": rng.randf_range(0.9, 1.15),
+		"style": rng.randi() % Defs.HAIR_STYLES.size(), "h": rng.randf_range(Defs.HEIGHT_RANGE.x, Defs.HEIGHT_RANGE.y), "wide": rng.randf_range(Defs.WIDTH_RANGE.x, Defs.WIDTH_RANGE.y),
 		"pitch": rng.randf_range(0.8, 1.25),
 	}
 	r["age"] = rng.randf_range(8.0, 18.0) if is_resident else rng.randf_range(8.0, 36.0)
