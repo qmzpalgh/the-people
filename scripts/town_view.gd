@@ -12,6 +12,7 @@ var game: Node            # the Main node, for its households
 var town: Town
 var cam: Cam
 var plates := {}          # lot id -> the plate's node
+var labels := {}          # lot id -> its floating label
 var houses := {}          # lot id -> the house's node, for home and vacant lots
 
 
@@ -101,6 +102,7 @@ func _plate(l: Dictionary) -> void:
 	var look := _look(l)
 	if not look.is_empty():
 		houses[l["id"]] = _house(n, look["house"], look["color"], l["slot"] % BOTH != 0)
+	_label(l, n)
 
 
 ## The footprint and wall colour of the house on a lot, or {} for bare land. A home reads
@@ -145,3 +147,50 @@ func _house(plate: Node3D, r: Rect2i, wall: Color, turn: bool) -> Node3D:
 	for wx in [-bw * 0.32, bw * 0.32]:
 		Meshes.box(hs, Vector3(1.2, 1.1, 0.1), c + Vector3(wx, 1.7, bd / 2.0 + 0.03), Color(0.6, 0.8, 0.95))
 	return hs
+
+
+## The text a lot's label shows: the family name, "To let" for a house nobody lives in, or
+## "For sale" for bare land.
+func label_text(l: Dictionary) -> String:
+	match l["kind"]:
+		"home":
+			return "%s" % game.households[l["household"]].family
+		"vacant":
+			return "To let"
+	return "For sale"
+
+
+## A label that floats above the house (above the middle of the plate on bare land) and
+## always faces the camera. A home is in ink, the player's own home in gold, and the
+## for-sale and to-let notices are quiet grey, as in the HUD.
+func _label(l: Dictionary, plate: Node3D) -> void:
+	var t := Label3D.new()
+	var txt := label_text(l)
+	if l["kind"] == "home" and l["household"] == 0:
+		txt += "\nYour home"
+	t.text = txt
+	t.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	t.fixed_size = true
+	t.pixel_size = 0.00048
+	t.font_size = 40
+	t.outline_size = 5
+	t.no_depth_test = true
+	var f: Font = game.ui.root.theme.default_font
+	if f != null:
+		t.font = f
+	var c := UI.INK
+	if l["kind"] != "home":
+		c = UI.MUTED
+	elif l["household"] == 0:
+		c = UI.GOLD.darkened(0.35)
+	t.modulate = c
+	t.outline_modulate = Color(0.97, 0.975, 0.965, 0.95)
+	var at := Vector3(World.W / 2.0, 3.0, World.H / 2.0)
+	if houses.has(l["id"]):
+		var hp: Vector3 = (houses[l["id"]] as Node3D).get_child(0).global_position
+		at = plate.to_local(hp) + Vector3(0, 9.0, 0)
+	t.position = at
+	plate.add_child(t)
+	labels[l["id"]] = t
+	if OS.has_environment("TP_SHOT"):
+		print("label lot %d slot %d: %s" % [l["id"], l["slot"], txt.replace("\n", " / ")])
