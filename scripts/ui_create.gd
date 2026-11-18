@@ -22,7 +22,7 @@ var sel := 0
 var rng := RandomNumberGenerator.new()
 var name_l: Label
 var info_l: Label
-var look_l: Label
+var style_btns: Array = []
 var fam_e: LineEdit
 var first_e: LineEdit
 var why_l: Label
@@ -82,8 +82,6 @@ func setup(g) -> Array:
 	name_l = ui._label(box, "", 20)
 	info_l = ui._label(box, "", 13)
 	info_l.add_theme_color_override("font_color", UI.MUTED)
-	look_l = ui._label(box, "", 13)
-	look_l.add_theme_color_override("font_color", UI.MUTED)
 	fam_e = _name_row(box, "Family", func(): fam_e.text = Defs.surname(rng))
 	first_e = _name_row(box, "First name", func(): first_e.text = Defs.first_name(rng))
 	var sl := ui._label(box, "Life stage", 12)
@@ -94,6 +92,13 @@ func setup(g) -> Array:
 	for st in STAGES:
 		var b := ui._seg(srow, st.capitalize(), set_stage.bind(st))
 		stage_btns.append(b)
+	var hl := ui._label(box, "Hair style", 12)
+	hl.add_theme_color_override("font_color", UI.MUTED)
+	var hrow := HBoxContainer.new()
+	hrow.add_theme_constant_override("separation", 4)
+	box.add_child(hrow)
+	for i in Defs.HAIR_STYLES.size():
+		style_btns.append(ui._seg(hrow, Defs.HAIR_STYLES[i], set_style.bind(i)))
 	skin_btns = _swatches(box, "Skin", Defs.SKIN_TONES, set_skin)
 	hair_btns = _swatches(box, "Hair colour", Defs.HAIR_COLOURS, set_hair)
 	why_l = ui._label(box, "", 12)
@@ -125,7 +130,9 @@ func setup(g) -> Array:
 	if OS.has_environment("TP_CREATE_LOOK"):  # "skin=2,hair=4": clicks those swatches on the selected member
 		for kv in OS.get_environment("TP_CREATE_LOOK").split(","):
 			var p := kv.split("=")
-			if p[0] == "skin":
+			if p[0] == "style":
+				set_style(int(p[1]))
+			elif p[0] == "skin":
 				set_skin(int(p[1]))
 			elif p[0] == "hair":
 				set_hair(int(p[1]))
@@ -264,6 +271,11 @@ func _style_swatches(btns: Array, colours: Array, current: Color) -> void:
 			btns[i].add_theme_stylebox_override(st, sb)
 
 
+func set_style(i: int) -> void:
+	members[sel]["look"]["style"] = i
+	_select(sel)
+
+
 func set_skin(i: int) -> void:
 	members[sel]["look"]["skin"] = Defs.SKIN_TONES[i]
 	_select(sel)
@@ -297,7 +309,8 @@ func _refresh() -> void:
 	name_l.text = person.pname
 	person.age = m["age"]
 	info_l.text = person.stage_text()
-	look_l.text = "Hair: %s" % Defs.HAIR_STYLES[int(m["look"]["style"])]
+	for i in style_btns.size():
+		style_btns[i].set_pressed_no_signal(i == int(m["look"]["style"]))
 	for i in STAGES.size():
 		stage_btns[i].set_pressed_no_signal(STAGES[i] == stage_of(m["age"]))
 	remove_b.disabled = members.size() <= 1
