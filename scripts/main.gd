@@ -33,6 +33,8 @@ var prev_speed := 1
 var mode := "live"
 var screen := "lot"         # the screen showing now: "lot" or "town"
 var screens := {}           # name -> the nodes shown, and running, only on that screen
+var town_view: TownView
+var speed_before_town := 1  # the speed to go back to when leaving the town
 var lot: Node3D             # the player's lot as drawn: its world, everyone, the camera
 var free_will := true
 var rel := {}
@@ -215,6 +217,17 @@ func _ready() -> void:
 			ui.debug_open(OS.get_environment("TP_UI"))
 	if OS.has_environment("TP_SCREEN"):
 		set_screen(OS.get_environment("TP_SCREEN"))
+	elif not testing or OS.has_environment("TP_BOOT"):
+		# A normal launch opens on the town. TP_BOOT lets a test run do the same.
+		# Nothing has written the save since the top of _ready(), so no file here means no save
+		# was there at launch. A launch with no household yet asks for one.
+		if FileAccess.file_exists(save_path):
+			town_view.open_home()
+		else:
+			town_view.ask_create()
+		set_screen("town")
+	if OS.has_environment("TP_TOWN_TRIP"):
+		add_child(TownTrip.new(self))
 
 
 func _make_person(id: int, sv: int, fam: String, hh: Household, spec := {}) -> Person:
@@ -702,24 +715,23 @@ func set_speed(s: int) -> void:
 		p.loop_p.stream_paused = s == 0
 
 
-## Lists what each screen shows. The town is a placeholder for now: a name tag, and a
-## camera left where the lot's camera starts so that a lot still drawn would be seen.
+## Leaves the lot for the town: a quiet save, Buy or Build put away, and the town drawn
+## again from the record, so it shows what play has changed.
+func go_town() -> void:
+	if screen == "town":
+		return
+	set_mode("live")
+	save_game(true)
+	town_view.refresh()
+	set_screen("town")
+
+
+## Lists what each screen shows: the lot with its HUD and camera, and the town view with its
+## own camera.
 func _build_screens() -> void:
-	var town := CanvasLayer.new()
-	add_child(town)
-	var tag := PanelContainer.new()
-	tag.theme = ui.root.theme
-	tag.position = Vector2(12, 12)
-	town.add_child(tag)
-	var l := Label.new()
-	l.text = "Town"
-	l.add_theme_color_override("font_color", UI.MUTED)
-	tag.add_child(l)
-	var town_cam := Camera3D.new()
-	add_child(town_cam)
-	town_cam.global_transform = cam.cam.global_transform
-	town_cam.fov = cam.cam.fov
-	screens = {"lot": [lot, ui, cam.cam], "town": [town, town_cam]}
+	town_view = TownView.new(self, town)
+	add_child(town_view)
+	screens = {"lot": [lot, ui, cam.cam], "town": [town_view, town_view.cam.cam, town_view.hud]}
 	for n in screens["town"]:
 		_show_node(n, false)
 
@@ -730,6 +742,11 @@ func set_screen(s: String) -> void:
 	if not screens.has(s):
 		push_error("There is no screen called '%s'." % s)
 		return
+	if s == "town" and screen != "town":
+		speed_before_town = speed
+		set_speed(0)  # time stands still in the town
+	elif s != "town" and screen == "town":
+		set_speed(speed_before_town)
 	screen = s
 	for k in screens:
 		if k != s:
@@ -953,6 +970,7 @@ func _unhandled_input(e: InputEvent) -> void:
 			KEY_R: buy_rot = (buy_rot + 1) % 4
 			KEY_F: toggle_walls()
 			KEY_H: ui.toggle_help()
+			KEY_T: go_town()
 			KEY_M: sfx.set_muted(not sfx.muted)
 			KEY_F5: save_game()
 			KEY_F9: load_game()
