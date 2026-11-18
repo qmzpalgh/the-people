@@ -12,6 +12,12 @@ var game: Node            # the Main node, for its households
 var town: Town
 var cam: Cam
 var plates := {}          # lot id -> the plate's node
+var hud: UITown
+var hover := -1           # id of the lot under the mouse, or -1
+var picked := -1          # id of the lot whose card is open, or -1
+var _hover_n: MeshInstance3D
+var _pick_n: MeshInstance3D
+var _frame := 0
 var labels := {}          # lot id -> its floating label
 var houses := {}          # lot id -> the house's node, for home and vacant lots
 
@@ -26,6 +32,10 @@ func _ready() -> void:
 	var length := cols * PITCH
 	var mid := length / 2.0 - PITCH / 2.0
 	_street(length, mid)
+	hud = UITown.new(game)
+	add_child(hud)
+	_hover_n = _marker(Color(UI.GOLD, 0.15))
+	_pick_n = _marker(Color(1, 1, 1, 0.3))
 	for l in town.lots:
 		_plate(l)
 	cam = Cam.new()
@@ -44,6 +54,68 @@ func _ready() -> void:
 			var bd: float = (h.get_child(0) as MeshInstance3D).mesh.size.z
 			print("lot %d side %s: house front to road edge %.1f, back to far edge %.1f" % [id, "S" if g.z > 0 else "N", absf(g.z) - ROAD / 2.0 - WALK - bd / 2.0, World.H - (absf(g.z) - ROAD / 2.0 - WALK) - bd / 2.0])
 		print("town view: %d plates for %d lots, %d houses for %d home and vacant lots" % [plates.size(), town.lots.size(), houses.size(), town.lots.filter(func(l): return l["kind"] != "empty").size()])
+
+
+## A flat tint the size of a lot, moved onto the lot that is hovered or picked.
+func _marker(c: Color) -> MeshInstance3D:
+	var m := MeshInstance3D.new()
+	var b := BoxMesh.new()
+	b.size = Vector3(World.W, 0.06, World.H)
+	m.mesh = b
+	var mt := StandardMaterial3D.new()
+	mt.albedo_color = c
+	mt.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mt.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.material_override = mt
+	m.visible = false
+	add_child(m)
+	return m
+
+
+## The lot under a screen position, or null. The mouse ray meets the ground, and the point
+## is tested against each plate's rectangle.
+func lot_at(mpos: Vector2) -> Variant:
+	var o := cam.cam.project_ray_origin(mpos)
+	var d := cam.cam.project_ray_normal(mpos)
+	if absf(d.y) < 0.0001:
+		return null
+	var p := o + d * (-o.y / d.y)
+	for l in town.lots:
+		var a := origin(l)
+		if p.x >= a.x and p.x <= a.x + World.W and p.z >= a.z and p.z <= a.z + World.H:
+			return l
+	return null
+
+
+func _show_marker(m: MeshInstance3D, id: int) -> void:
+	m.visible = id >= 0
+	if id >= 0:
+		m.position = origin(town.lot(id)) + Vector3(World.W / 2.0, 0.05, World.H / 2.0)
+
+
+## A click on a lot opens its card; a click on nothing closes it. Returns the card title.
+func click(mpos: Vector2) -> String:
+	var l = lot_at(mpos)
+	picked = -1 if l == null else l["id"]
+	_show_marker(_pick_n, picked)
+	hud.show_lot(l)
+	return hud.title
+
+
+func _process(_dt: float) -> void:
+	var l = lot_at(get_viewport().get_mouse_position())
+	hover = -1 if l == null else l["id"]
+	_show_marker(_hover_n, hover)
+	_frame += 1
+	if _frame == 5 and OS.has_environment("TP_TOWN_CLICK"):
+		var id := int(OS.get_environment("TP_TOWN_CLICK"))
+		var a := origin(town.lot(id)) + Vector3(World.W / 2.0, 0, World.H / 2.0)
+		print("town card: ", click(cam.cam.unproject_position(a)))
+
+
+func _unhandled_input(e: InputEvent) -> void:
+	if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
+		click(e.position)
 
 
 ## Where a lot's top-left corner sits. Even slots are on the north side of the road.
@@ -171,10 +243,11 @@ func _label(l: Dictionary, plate: Node3D) -> void:
 	t.text = txt
 	t.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	t.fixed_size = true
-	t.pixel_size = 0.00048
-	t.font_size = 40
-	t.outline_size = 5
-	t.no_depth_test = true
+	t.pixel_size = 0.00024
+	t.font_size = 80
+	t.outline_size = 2
+	t.render_priority = 1
+	t.outline_render_priority = 0
 	var f: Font = game.ui.root.theme.default_font
 	if f != null:
 		t.font = f
@@ -182,13 +255,13 @@ func _label(l: Dictionary, plate: Node3D) -> void:
 	if l["kind"] != "home":
 		c = UI.MUTED
 	elif l["household"] == 0:
-		c = UI.GOLD.darkened(0.35)
+		c = UI.GOLD.darkened(0.55)
 	t.modulate = c
-	t.outline_modulate = Color(0.97, 0.975, 0.965, 0.95)
+	t.outline_modulate = Color(0.97, 0.975, 0.965, 0.9)
 	var at := Vector3(World.W / 2.0, 3.0, World.H / 2.0)
 	if houses.has(l["id"]):
 		var hp: Vector3 = (houses[l["id"]] as Node3D).get_child(0).global_position
-		at = plate.to_local(hp) + Vector3(0, 9.0, 0)
+		at = plate.to_local(hp) + Vector3(0, 13.0, 0)
 	t.position = at
 	plate.add_child(t)
 	labels[l["id"]] = t

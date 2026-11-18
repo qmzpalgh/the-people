@@ -654,7 +654,7 @@ func set_speed(s: int) -> void:
 func _build_screens() -> void:
 	town_view = TownView.new(self, town)
 	add_child(town_view)
-	screens = {"lot": [lot, ui, cam.cam], "town": [town_view, town_view.cam.cam]}
+	screens = {"lot": [lot, ui, cam.cam], "town": [town_view, town_view.cam.cam, town_view.hud]}
 	for n in screens["town"]:
 		_show_node(n, false)
 
