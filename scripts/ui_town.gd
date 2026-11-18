@@ -3,6 +3,8 @@ extends CanvasLayer
 ## The town screen's HUD: the card that opens when a lot is clicked. Built from the same
 ## helpers and colours as the lot HUD (`ui.gd`): quiet by default, detail on demand.
 
+signal dismissed             # the create prompt has been answered
+
 var game: Node
 var ui: UI
 var card: PanelContainer
@@ -63,6 +65,7 @@ func asking() -> bool:
 ## Until the household creator exists, this starts the random household already loaded.
 func _create() -> void:
 	prompt.hide()
+	dismissed.emit()
 	game.set_screen("lot")
 
 

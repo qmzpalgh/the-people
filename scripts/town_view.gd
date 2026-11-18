@@ -31,6 +31,7 @@ func _init(g: Node = null, t: Town = null) -> void:
 func _ready() -> void:
 	hud = UITown.new(game)
 	add_child(hud)
+	hud.dismissed.connect(_recolour)
 	cam = Cam.new()
 	cam.yaw = 0.0
 	cam.pitch = 0.75
@@ -86,6 +87,7 @@ func refresh() -> void:
 ## The first launch, with no save: no lot is framed and no card is open, only the prompt.
 func ask_create() -> void:
 	hud.show_prompt()
+	_recolour()
 
 
 ## A flat tint the size of a lot, moved onto the lot that is hovered or picked.
@@ -163,7 +165,7 @@ func click(mpos: Vector2) -> String:
 
 
 func _process(_dt: float) -> void:
-	var l = lot_at(get_viewport().get_mouse_position())
+	var l = null if hud.asking() else lot_at(get_viewport().get_mouse_position())
 	hover = -1 if l == null else l["id"]
 	_show_marker(_hover_n, hover)
 	_frame += 1
@@ -298,6 +300,20 @@ func label_text(l: Dictionary) -> String:
 	return "For sale"
 
 
+## The player's own home is gold, except while the prompt is up: there is no home yet.
+func _label_colour(l: Dictionary) -> Color:
+	if l["kind"] != "home":
+		return UI.MUTED
+	if l["household"] == 0 and not hud.asking():
+		return UI.GOLD.darkened(0.55)
+	return UI.INK
+
+
+func _recolour() -> void:
+	for id in labels:
+		labels[id].modulate = _label_colour(town.lot(id))
+
+
 ## A label that floats above the house (above the middle of the plate on bare land) and
 ## always faces the camera. A home is in ink, the player's own home in gold, and the
 ## for-sale and to-let notices are quiet grey, as in the HUD.
@@ -315,12 +331,7 @@ func _label(l: Dictionary, plate: Node3D) -> void:
 	var f: Font = game.ui.root.theme.default_font
 	if f != null:
 		t.font = f
-	var c := UI.INK
-	if l["kind"] != "home":
-		c = UI.MUTED
-	elif l["household"] == 0:
-		c = UI.GOLD.darkened(0.55)
-	t.modulate = c
+	t.modulate = _label_colour(l)
 	t.outline_modulate = Color(0.97, 0.975, 0.965, 0.9)
 	var at := Vector3(World.W / 2.0, 3.0, World.H / 2.0)
 	if houses.has(l["id"]):
