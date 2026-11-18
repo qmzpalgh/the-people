@@ -43,6 +43,9 @@ var next_hh := 1
 var welcomed := false
 var over := false
 var age_rate := 1.0
+## The lot a new game started on, from TP_LOT: "" for a generated home, "empty" for bare
+## land, which counts as bought on moving in (start_household takes LOT_PRICE).
+var lot_kind := ""
 
 var buy_kind := ""
 var buy_rot := 0
@@ -112,10 +115,12 @@ func _ready() -> void:
 	home.world = world
 	# TP_LOT picks the lot a new game starts on: "empty" is bare land with no house. A save
 	# keeps the lot it was made on.
-	var lot_kind := OS.get_environment("TP_LOT") if data == null else ""
+	lot_kind = OS.get_environment("TP_LOT") if data == null else ""
 	world.setup(seed_v, data["households"][0]["world"] if data != null else null, lot_kind == "empty")
 	if OS.has_environment("TP_TEST") and (lot_kind != "" or OS.has_environment("TP_MONEY")):
-		(func(): print("START money $%d (START_FUNDS $%d)" % [money, Defs.START_FUNDS])).call_deferred()
+		(func(): print("START funds $%d, lot price $%d, starting money $%d (START_FUNDS $%d)" % [money + _lot_paid(), _lot_paid(), money, Defs.START_FUNDS])).call_deferred()
+	if OS.has_environment("TP_TEST") and (lot_kind != "" or OS.has_environment("TP_PRICES")):
+		_print_prices.call_deferred()
 	if lot_kind == "empty" and OS.has_environment("TP_ROOM"):
 		_room_test.call_deferred()  # once the camera and HUD it clicks through exist
 	# The town draws from its own rng, seeded from the game's, so no other draw moves.
@@ -237,6 +242,7 @@ func start_household(spec: Dictionary) -> void:
 	family = spec["family"]
 	home.family = family
 	home.money = int(spec["money"]) if spec.has("money") else (Defs.START_FUNDS if _houses_itself() else Household.new().money)
+	home.money -= _lot_paid()
 	var spots := world.arrival_tiles()
 	for i in spec["members"].size():
 		var p := _make_person(i, _member_seed(i), family, home, spec["members"][i])
@@ -1100,6 +1106,38 @@ func _walls_changed() -> void:
 ## True when the player's lot came with no house, so the household has to house itself.
 func _houses_itself() -> bool:
 	return world != null and not world.house.has_area()
+
+
+## What the household paid for its lot on moving in: LOT_PRICE for a TP_LOT=empty start,
+## which stands in for buying an empty lot until the town sells them (N2); nothing otherwise.
+func _lot_paid() -> int:
+	return Defs.LOT_PRICE if lot_kind == "empty" else 0
+
+
+## TP_PRICES (or any TP_LOT) under TP_TEST: one line with the funds, the lot price and the
+## value of every generated home in this town, the player's, the neighbours' and the vacant
+## ones. Each is built afresh from its lot's seed, so nothing lived in has changed it yet.
+## A bare player lot is not a generated home and is left out.
+func _print_prices() -> void:
+	var vals := []
+	for l in town.by_slot():
+		if l["kind"] == "empty" or l["seed"] < 0:
+			continue
+		if l["kind"] == "home" and l["household"] == 0 and _houses_itself():
+			continue
+		var w := World.new()
+		w.headless = true
+		w.setup(l["seed"])
+		vals.append(w.value())
+		if l["kind"] == "home" and households.has(l["household"]) and households[l["household"]].world.value() != vals.back():
+			print("PRICES mismatch on lot %d: lived-in home $%d, built from seed $%d" % [l["id"], households[l["household"]].world.value(), vals.back()])
+		w.free()
+	vals.sort()
+	if vals.is_empty():
+		return
+	var spare: int = Defs.START_FUNDS - Defs.LOT_PRICE - vals[0]
+	print("PRICES seed %d: START_FUNDS $%d, LOT_PRICE $%d | %d homes: cheapest $%d, median $%d, dearest $%d | spare after lot + cheapest $%d (%.1f%% of their cost)" % [
+		seed_base, Defs.START_FUNDS, Defs.LOT_PRICE, vals.size(), vals[0], vals[vals.size() / 2], vals.back(), spare, 100.0 * spare / (Defs.LOT_PRICE + vals[0])])
 
 
 ## Where a point on the ground shows on screen, for scripted clicks.
