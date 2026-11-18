@@ -19,6 +19,8 @@ var _hover_n: MeshInstance3D
 var _pick_n: MeshInstance3D
 var _home_n: Node3D       # a gold frame round the player's own lot
 var _frame := 0
+var lit := {}             # home lot id -> {mat, light}: the windows and glow to switch at night
+var _night := -1          # 1 or 0 once the lights match the clock, -1 when they need setting
 var labels := {}          # lot id -> its floating label
 var houses := {}          # lot id -> the house's node, for home and vacant lots
 
@@ -78,6 +80,8 @@ func refresh() -> void:
 	plates.clear()
 	houses.clear()
 	labels.clear()
+	lit.clear()
+	_night = -1
 	hover = -1
 	picked = -1
 	_build()
@@ -169,6 +173,8 @@ func _process(_dt: float) -> void:
 	hover = -1 if l == null else l["id"]
 	_show_marker(_hover_n, hover)
 	_frame += 1
+	if _night != int(game.world.night):
+		_set_lights(game.world.night)
 	if _frame == 5 and OS.has_environment("TP_TOWN_CLICK"):
 		var id := int(OS.get_environment("TP_TOWN_CLICK"))
 		var a := origin(town.lot(id)) + Vector3(World.W / 2.0, 0, World.H / 2.0)
@@ -242,6 +248,8 @@ func _plate(l: Dictionary) -> void:
 	var look := _look(l)
 	if not look.is_empty():
 		houses[l["id"]] = _house(n, look["house"], look["color"], l["slot"] % BOTH != 0)
+		if l["kind"] == "home":
+			_glow(l["id"], houses[l["id"]])
 	_label(l, n)
 
 
@@ -285,8 +293,43 @@ func _house(plate: Node3D, r: Rect2i, wall: Color, turn: bool) -> Node3D:
 	hs.add_child(roof)
 	Meshes.box(hs, Vector3(1.0, 2.1, 0.1), c + Vector3(0, 1.05, bd / 2.0 + 0.03), Meshes.WOOD.darkened(0.2))
 	for wx in [-bw * 0.32, bw * 0.32]:
-		Meshes.box(hs, Vector3(1.2, 1.1, 0.1), c + Vector3(wx, 1.7, bd / 2.0 + 0.03), Color(0.6, 0.8, 0.95))
+		Meshes.box(hs, Vector3(1.2, 1.1, 0.1), c + Vector3(wx, 1.7, bd / 2.0 + 0.03), Color(0.6, 0.8, 0.95)).name = "Window"
+	hs.set_meta("centre", c)
 	return hs
+
+
+## Gives an occupied home its own window material and a soft warm light, both switched on
+## at night. Vacant houses and bare land keep plain windows and no light.
+func _glow(id: int, hs: Node3D) -> void:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(0.6, 0.8, 0.95)
+	for w in hs.get_children():
+		if w.name.begins_with("Window"):
+			w.material_override = m
+	var o := OmniLight3D.new()
+	o.light_color = Color(1.0, 0.78, 0.45)
+	o.omni_range = 16.0
+	o.light_energy = 1.6
+	o.shadow_enabled = false
+	o.position = (hs.get_meta("centre") as Vector3) + Vector3(0, 2.5, 3.0)
+	o.visible = false
+	hs.add_child(o)
+	lit[id] = {"mat": m, "light": o}
+
+
+## Windows glow and the warm light comes on in occupied homes when the lot's night is on.
+func _set_lights(night: bool) -> void:
+	_night = 1 if night else 0
+	for id in lit:
+		var m: StandardMaterial3D = lit[id]["mat"]
+		m.albedo_color = Color(1.0, 0.85, 0.55) if night else Color(0.6, 0.8, 0.95)
+		m.emission_enabled = night
+		m.emission = Color(1.0, 0.75, 0.4)
+		m.emission_energy_multiplier = 2.0
+		lit[id]["light"].visible = night
+	_recolour()
+	if OS.has_environment("TP_SHOT"):
+		print("town lights: %d of %d homes lit (night %s)" % [lit.values().filter(func(d): return d["light"].visible).size(), lit.size(), night])
 
 
 ## The text a lot's label shows: the family name, "To let" for a house nobody lives in, or
@@ -302,11 +345,12 @@ func label_text(l: Dictionary) -> String:
 
 ## The player's own home is gold, except while the prompt is up: there is no home yet.
 func _label_colour(l: Dictionary) -> Color:
+	var night := _night == 1
 	if l["kind"] != "home":
-		return UI.MUTED
+		return UI.MUTED.lightened(0.45) if night else UI.MUTED
 	if l["household"] == 0 and not hud.asking():
-		return UI.GOLD.darkened(0.55)
-	return UI.INK
+		return UI.GOLD if night else UI.GOLD.darkened(0.55)
+	return Color(0.93, 0.95, 0.97) if night else UI.INK
 
 
 func _recolour() -> void:
@@ -332,7 +376,7 @@ func _label(l: Dictionary, plate: Node3D) -> void:
 	if f != null:
 		t.font = f
 	t.modulate = _label_colour(l)
-	t.outline_modulate = Color(0.97, 0.975, 0.965, 0.9)
+	t.outline_modulate = Color(0.97, 0.975, 0.965, 0.9)  # thin, so it only edges the letters
 	var at := Vector3(World.W / 2.0, 3.0, World.H / 2.0)
 	if houses.has(l["id"]):
 		var hp: Vector3 = (houses[l["id"]] as Node3D).get_child(0).global_position
