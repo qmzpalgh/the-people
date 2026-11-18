@@ -117,10 +117,14 @@ func _ready() -> void:
 	world = World.new()
 	lot.add_child(world)
 	home.world = world
-	# TP_LOT picks the lot a new game starts on: "empty" is bare land with no house. A save
-	# keeps the lot it was made on.
+	# TP_LOT picks the lot a new game starts on: "empty" is bare land with no house, and
+	# "vacant:<seed>" is the generated home built from that seed. A save keeps the lot it was
+	# made on. The player's world draws from its own rng, so the game's rng does not move.
 	lot_kind = OS.get_environment("TP_LOT") if data == null else ""
-	world.setup(seed_v, data["households"][0]["world"] if data != null else null, lot_kind == "empty")
+	var home_seed := int(lot_kind.get_slice(":", 1)) if lot_kind.begins_with("vacant:") else seed_v
+	world.setup(home_seed, data["households"][0]["world"] if data != null else null, lot_kind == "empty")
+	if lot_kind.begins_with("vacant:"):
+		_move_into_vacant.call_deferred(home_seed)  # once the town has its vacant lots
 	if OS.has_environment("TP_TEST") and (lot_kind != "" or OS.has_environment("TP_MONEY")):
 		(func(): print("START funds $%d, lot price $%d, starting money $%d (START_FUNDS $%d)" % [money + _lot_paid(), _lot_paid(), money, Defs.START_FUNDS])).call_deferred()
 	if OS.has_environment("TP_TEST") and (lot_kind != "" or OS.has_environment("TP_PRICES")):
@@ -1142,6 +1146,39 @@ func _session_log() -> void:
 		e.pressed = true
 		_unhandled_input(e)
 		print("PAUSELOG frame %d: pressed Space, speed now %d" % [f, speed])
+
+
+## TP_LOT=vacant:<seed>: puts the move into the town record and proves the house. If the
+## seed is one of the town's vacant lots, household 0 takes that lot and the lot it was given
+## first becomes vacant, keeping the seed of the house it would have had. Otherwise lot 0 keeps
+## household 0 with the new seed. Then prints the player's home beside a fresh headless World
+## built from the same seed, as the town view would build it.
+func _move_into_vacant(s: int) -> void:
+	var vac := town.lots.filter(func(l): return l["kind"] == "vacant")
+	print("TOWN vacant lots: " + ", ".join(vac.map(func(l): return "lot %d seed %d" % [l["id"], l["seed"]])))
+	var taken = null
+	for l in vac:
+		if l["seed"] == s:
+			taken = l
+	var first = town.lot_of(0)
+	if taken != null:
+		town.vacate(0)
+		town.take_vacant(taken["id"], 0)
+		print("TOWN household 0 moved into vacant lot %d (seed %d); lot %d is vacant now (seed %d)" % [taken["id"], s, first["id"], first["seed"]])
+	else:
+		first["seed"] = s
+		print("TOWN seed %d is not a vacant lot in this town; lot %d keeps household 0, now with seed %d" % [s, first["id"], s])
+	var w := World.new()
+	w.headless = true
+	w.setup(s)
+	print("HOME player's: " + _home_line(world))
+	print("HOME from seed: " + _home_line(w))
+	print("HOME identical: %s" % (JSON.stringify(world.save_state()) == JSON.stringify(w.save_state())))
+	w.free()
+
+
+func _home_line(w: World) -> String:
+	return "house %s, wall colour %s, value $%d, %d wall edges, %d objects, door %s" % [w.house, w.wall_color.to_html(false), w.value(), w.walls.size(), w.objects.size(), w.door_tile]
 
 
 ## True when the player's lot came with no house, so the household has to house itself.
