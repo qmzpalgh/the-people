@@ -21,13 +21,16 @@ const CONTROLS := [
 	["Right-click or Esc", "Put the current tool away"], ["W A S D", "Move the camera"],
 	["Q / E, middle-drag", "Turn the camera"], ["Mouse wheel", "Zoom"], ["Tab", "Next household member"],
 	["Space, 1 2 3", "Pause and speed"], ["R", "Rotate furniture"], ["F", "Walls up or down"],
-	["F5 / F9", "Save / load"], ["H", "Show or hide this list"],
+	["F5 / F9", "Save / load"], ["T", "Return to town"], ["H", "Show or hide this list"],
 ]
 
 var game
 var root: Control
 var clock_l: Label
 var money_l: Label
+var card_layout: VBoxContainer
+var card_motion: Tween
+var card_pages: Control
 var speed_btns: Array = []
 var mode_btns := {}
 var chips_box: HBoxContainer
@@ -103,11 +106,13 @@ func _ready() -> void:
 	var trh := _hbox(tr, 2)
 	for m in ["live", "buy", "build"]:
 		mode_btns[m] = _seg(trh, m.capitalize(), game.set_mode.bind(m))
+	_btn(trh, "Town", game.return_to_town)
 	var mb := _btn(trh, "Menu", _open_options)
 	mb.add_theme_color_override("font_color", MUTED)
 
 	# Household and the selected person.
 	var bl := VBoxContainer.new()
+	card_layout = bl
 	bl.add_theme_constant_override("separation", 8)
 	_place(bl, Control.PRESET_BOTTOM_LEFT, 12, -12)
 	chips_box = _hbox(bl, 6)
@@ -137,19 +142,26 @@ func _ready() -> void:
 	var tabs := _hbox(cv, 2)
 	for t in CARD_TABS:
 		tab_btns[t] = _tab(tabs, t)
+	card_pages = Control.new()
+	cv.add_child(card_pages)
 	needs_box = GridContainer.new()
 	needs_box.columns = 4
 	needs_box.add_theme_constant_override("h_separation", 8)
 	needs_box.add_theme_constant_override("v_separation", 5)
-	cv.add_child(needs_box)
+	card_pages.add_child(needs_box)
 	for n in Defs.NEEDS:
 		var l := _label(needs_box, Defs.NEED_NAMES[n], 13)
 		l.custom_minimum_size.x = 58
 		bars[n] = _bar(needs_box, 84, 8)
-	_build_work(cv)
-	_build_skills(cv)
-	_build_traits(cv)
-	_build_people(cv)
+	_build_work(card_pages)
+	_build_skills(card_pages)
+	_build_traits(card_pages)
+	_build_people(card_pages)
+	for page in [needs_box, work_box, skills_box, traits_box, people_scroll]:
+		var minimum: Vector2 = page.get_combined_minimum_size()
+		card_pages.custom_minimum_size = card_pages.custom_minimum_size.max(minimum)
+		page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	card_pages.hide()
 
 	# Catalogue and build tools.
 	side = PanelContainer.new()
@@ -720,6 +732,8 @@ func refresh() -> void:
 		speed_btns[i].set_pressed_no_signal(game.speed == i)
 	for m in mode_btns:
 		mode_btns[m].set_pressed_no_signal(game.mode == m)
+	mode_btns["build"].disabled = game.home.tenure == "rent"
+	mode_btns["build"].tooltip_text = "Renters can furnish the home in Buy mode." if mode_btns["build"].disabled else ""
 	if side.visible:
 		for k in item_btns:
 			item_btns[k].set_pressed_no_signal(game.buy_kind == k)
@@ -787,11 +801,16 @@ func _refresh_card() -> void:
 
 	# Only the needs that want attention surface on their own.
 	var low := []
-	if card_tab != "needs" and not s.away:
+	if not s.away:
 		for n in Defs.NEEDS:
 			if s.needs[n] < 30.0:
 				low.append(n)
-	alerts.visible = not low.is_empty()
+	var before := card_layout.size.y
+	var opened := not card_tab.is_empty()
+	var warning := not low.is_empty()
+	var changed := card_pages.visible != opened or alerts.visible != warning
+	card_pages.visible = opened
+	alerts.visible = warning
 	if _changed("alerts", ",".join(low)):
 		_clear(alerts)
 		for n in low:
@@ -803,14 +822,20 @@ func _refresh_card() -> void:
 			labels.append(s.cur.label)
 		for a in s.queue:
 			labels.append(a.label)
-	queue_box.visible = not labels.is_empty()
+	var queued := not labels.is_empty()
+	changed = changed or queue_box.visible != queued
+	queue_box.visible = queued
 	if _changed("queue", s.pname + "|".join(labels)):
+		changed = true
 		_clear(queue_box)
 		for i in labels.size():
 			var b := _btn(queue_box, labels[i] + "  ×", game.cancel_action.bind(s, i))
 			b.add_theme_font_size_override("font_size", 12)
 			b.add_theme_stylebox_override("normal", _sb(Color(INK, 0.07), 9, 8, 2))
 			b.tooltip_text = "Cancel"
+
+	if changed and before > 0.0:
+		_animate_card.call_deferred(before)
 
 	if card_tab == "needs":
 		for n in Defs.NEEDS:
@@ -823,6 +848,19 @@ func _refresh_card() -> void:
 		_refresh_traits(s)
 	if people_scroll.visible:
 		_refresh_people(s)
+
+
+func _animate_card(previous_height: float) -> void:
+	await get_tree().process_frame
+	var shift := card_layout.size.y - previous_height
+	if is_zero_approx(shift):
+		return
+	if card_motion != null:
+		card_motion.kill()
+	card_layout.position.y += shift
+	var target := root.size.y - 12.0 - card_layout.size.y
+	card_motion = create_tween()
+	card_motion.tween_property(card_layout, "position:y", target, 0.15).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 
 
 # ---------------------------------------------------------------- person card tabs
@@ -1024,7 +1062,6 @@ func _refresh_traits(s: Person) -> void:
 
 const REL_W := 52.0  # width of every relationship track
 const ROW_H := 24.0
-const PEOPLE_ROWS := 6  # rows shown before the list scrolls
 
 
 func _build_people(parent: Node) -> void:
@@ -1076,18 +1113,13 @@ func _refresh_people(s: Person) -> void:
 	if _changed("people", sig):
 		_clear(people_list)
 		people_rows.clear()
-		var items := 0
 		if groups[0].is_empty() and groups[1].is_empty():
 			_people_note("Nobody yet.")
-			items += 1
 		for g in 2:
 			if g == 1 and not groups[1].is_empty() and not groups[0].is_empty():
 				_people_note("Neighbours")
-				items += 1
 			for p in groups[g]:
 				_people_row(p)
-				items += 1
-		people_scroll.custom_minimum_size.y = mini(items, PEOPLE_ROWS) * ROW_H
 		people_scroll.scroll_vertical = 0
 	for row in people_rows:
 		var r: float = clampf(game.get_rel(s, row[0]), -100.0, 100.0)

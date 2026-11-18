@@ -8,3 +8,9 @@ var family := ""
 var world: World
 var money := 2500
 var player := false
+var tenure := "own"
+var rent := 0
+
+
+static func rent_for(value: int) -> int:
+	return maxi(1, roundi(value * Defs.RENT_RATE))

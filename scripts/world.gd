@@ -26,6 +26,7 @@ var headless := false
 var night := false
 var door_tile := Vector2i.ZERO
 var exit_tile := Vector2i.ZERO
+var entry_inside := Vector2i.ZERO
 var house := Rect2i()
 var rooms: Array = []  # [{rect: Rect2i, type: String}]
 var wall_color := Color.WHITE
@@ -36,7 +37,7 @@ var _obj_root: Node3D
 var _floor_mats: Array = []
 
 
-func setup(seed_v: int, data = null) -> void:
+func setup(seed_v: int, data = null, empty := false) -> void:
 	rng.seed = seed_v
 	floors.resize(W * H)
 	room_of.resize(W * H)
@@ -53,6 +54,10 @@ func setup(seed_v: int, data = null) -> void:
 		_build_scenery(seed_v)
 	if data != null:
 		load_state(data)
+	elif empty:
+		exit_tile = Vector2i(W / 2, H - 1)
+		door_tile = exit_tile
+		entry_inside = exit_tile
 	else:
 		for attempt in 40:
 			_clear()
@@ -349,6 +354,53 @@ func update_room_scores() -> void:
 		room_scores[r] = clampf(s, 0.0, 100.0)
 
 
+## Generated houses have a recorded footprint. Player-built homes use enclosed tiles.
+func house_bounds() -> Rect2i:
+	if house.has_area():
+		return house
+	ensure_nav()
+	var open_rooms := {}
+	for x in W:
+		open_rooms[room_of[x]] = true
+		open_rooms[room_of[(H - 1) * W + x]] = true
+	for y in H:
+		open_rooms[room_of[y * W]] = true
+		open_rooms[room_of[y * W + W - 1]] = true
+	var result := Rect2i()
+	for i in W * H:
+		if not open_rooms.has(room_of[i]):
+			var tile := Rect2i(i % W, i / W, 1, 1)
+			result = result.merge(tile) if result.has_area() else tile
+	return result
+
+
+## Find the reachable door between the street and an enclosed room nearest the kerb.
+func update_entry() -> void:
+	ensure_nav()
+	door_tile = exit_tile
+	entry_inside = exit_tile
+	var street_room := room_of[idx(exit_tile)]
+	var best := INF
+	for edge in walls:
+		if walls[edge] != 2:
+			continue
+		var a := Vector2i(edge.x, edge.y)
+		var b := a - (Vector2i(0, 1) if edge.z == 0 else Vector2i(1, 0))
+		if not walkable(a) or not walkable(b):
+			continue
+		if room_of[idx(b)] == street_room:
+			var swap := a
+			a = b
+			b = swap
+		if room_of[idx(a)] != street_room or room_of[idx(b)] == street_room:
+			continue
+		var distance := (H - 1 - a.y) * W + absi(a.x - exit_tile.x)
+		if distance < best and path(exit_tile, a) != null:
+			best = distance
+			door_tile = a
+			entry_inside = b
+
+
 func room_score_at(t: Vector2i) -> float:
 	if not inb(t):
 		return 60.0
@@ -634,6 +686,7 @@ func _gen_house() -> void:
 	var fx := rng.randi_range(fr.position.x + 1, fr.end.x - 2) if fr.size.x >= 3 else fr.position.x
 	_make_door(Vector3i(fx, south, 0), keep)
 	door_tile = Vector2i(fx, south)
+	entry_inside = door_tile + Vector2i.UP
 	exit_tile = Vector2i(fx, H - 1)
 	for y in range(south, H):
 		floors[y * W + fx] = 4
@@ -716,7 +769,7 @@ func _place_wall(r: Rect2i, kind: String, keep: Dictionary, need_front := true):
 
 func _furnish(keep: Dictionary) -> void:
 	var bedrooms := 0
-	var extras := ["computer", "easel", "mirror", "weights", "bookshelf"]
+	var extras := ["computer", "mirror", "weights", "bookshelf"]
 	for rm in rooms:
 		var r: Rect2i = rm["rect"]
 		match rm["type"]:
@@ -818,7 +871,7 @@ func save_state() -> Dictionary:
 		w.append([k.x, k.y, k.z, walls[k]])
 	var objs := []
 	for o in objects:
-		objs.append({"k": o.kind, "x": o.tile.x, "y": o.tile.y, "r": o.rot, "s": o.oseed, "label": o.label})
+		objs.append({"k": o.kind, "x": o.tile.x, "y": o.tile.y, "r": o.rot, "s": o.oseed, "label": o.label, "included": o.included})
 	var rms := []
 	for rm in rooms:
 		var r: Rect2i = rm["rect"]
@@ -826,7 +879,7 @@ func save_state() -> Dictionary:
 	return {
 		"house": [house.position.x, house.position.y, house.size.x, house.size.y],
 		"rooms": rms, "door": [door_tile.x, door_tile.y], "exit": [exit_tile.x, exit_tile.y],
-		"wall_color": wall_color.to_html(), "floors": Array(floors), "walls": w, "objects": objs,
+		"entry_inside": [entry_inside.x, entry_inside.y], "wall_color": wall_color.to_html(), "floors": Array(floors), "walls": w, "objects": objs,
 		"rng": str(rng.state),
 	}
 
@@ -840,6 +893,8 @@ func load_state(d: Dictionary) -> void:
 		rooms.append({"rect": Rect2i(int(r[0]), int(r[1]), int(r[2]), int(r[3])), "type": rm["type"]})
 	door_tile = Vector2i(int(d["door"][0]), int(d["door"][1]))
 	exit_tile = Vector2i(int(d["exit"][0]), int(d["exit"][1]))
+	var entry: Array = d.get("entry_inside", [door_tile.x, door_tile.y - 1])
+	entry_inside = Vector2i(int(entry[0]), int(entry[1]))
 	wall_color = Color.html(d["wall_color"])
 	var fl: Array = d["floors"]
 	for i in mini(fl.size(), W * H):
@@ -850,6 +905,7 @@ func load_state(d: Dictionary) -> void:
 		if Defs.OBJECTS.has(o["k"]):
 			var obj := add_object(o["k"], int(o["x"]), int(o["y"]), int(o["r"]), int(o["s"]))
 			obj.label = o.get("label", "")
+			obj.included = o.get("included", false)
 	rng.state = int(d.get("rng", "1"))
 
 

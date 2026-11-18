@@ -8,7 +8,7 @@ Build menus.
 Every chunk below is sized to be built and tested on its own. Chunks are grouped into
 branches, and the branch map says which branches can run at the same time.
 
-## Where the game is today
+## Starting point
 
 - One scene. `scripts/main.gd` builds everything in `_ready()` and drops you straight
   onto your lot.
@@ -30,7 +30,7 @@ branches, and the branch map says which branches can run at the same time.
 1. **Regression gate.** This must run with no `SCRIPT ERROR`, `STUCK` or `LOST` lines:
 
    ```bash
-   TP_TEST=3 TP_SEED=100 TP_AGE=0 godot --headless --path /home/jimbo/the-people
+   TP_TEST=3 TP_SEED=100 TP_AGE=0 godot --headless --path .
    ```
 
    Same-seed runs are repeatable (checked: two runs give byte-identical output), so a
@@ -220,6 +220,32 @@ chunks, not the whole plan.
     and anyone in Arts is given another career. The alternative is to keep both and leave
     Arts stuck until a new hobby trains Creativity. Either way, the Skills tab (A4) then
     shows four rows, not five.
+
+## Shipped flow and verification
+
+The playable roadmap is implemented. A fresh game opens in town. Create a household,
+then buy land, rent a furnished home, or buy the home outright. Returning to town saves
+and pauses the current household.
+
+Starting funds are $14,500 and empty lots cost $2,500. Furnished homes measured from
+seeds 100–105 ranged from $10,446 to $12,762. Buying an empty lot and building to the
+cheapest measured value leaves $1,554. Rent is 6% of the furnished value every
+three days, with one period paid as a deposit.
+
+Run these checks from the project directory with Godot 4.7.
+
+```bash
+godot --headless --path . --script tests/roadmap.gd
+TP_TEST=3 TP_SEED=100 TP_AGE=0 TP_SLEEP_TRACE=1 godot --headless --path .
+TP_TEST=2 TP_SEED=100 TP_AGE=0 TP_LOT=empty godot --headless --path .
+TP_TEST=7 TP_SEED=100 TP_AGE=0 TP_LOT=vacant:7 TP_RENT=1 godot --headless --path .
+```
+
+The empty-lot simulation checks the bare starting state before furnishing it for the
+smoke test. The end-to-end check exercises the separate player flow through town,
+construction, a visitor at the front door, a full day and save/load. Version 2 saves
+keep loading. The catalogue migration refunds retired furniture and remaps old career
+indices.
 
 ## Later
 

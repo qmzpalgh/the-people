@@ -6,7 +6,7 @@ const MULT := [0.0, 1.0, 4.0, 12.0]
 
 const Probe := preload("res://scripts/probe.gd")
 
-static var skip_load := false
+static var start_creator := false
 static var _run := 0
 static var _probe: RefCounted
 
@@ -29,8 +29,18 @@ var money: int:
 var minutes := 7.5 * 60.0  # game minutes since day 0, 00:00
 var speed := 1
 var prev_speed := 1
+var live_speed := 1
+var skip_speed := -1
+var skip_disabled_day := -1
 var mode := "live"
 var screen := "lot"         # the screen showing now: "lot" or "town"
+var town_view: TownView
+var town_ui: UITown
+var creator: UICreate
+var home_previews := {}
+var household_draft := {}
+var selected_lot := -1
+var creation_count := 0
 var screens := {}           # name -> the nodes shown, and running, only on that screen
 var lot: Node3D             # the player's lot as drawn: its world, everyone, the camera
 var free_will := true
@@ -83,10 +93,14 @@ func _ready() -> void:
 	if OS.has_environment("TP_SAVE"):
 		save_path = OS.get_environment("TP_SAVE")
 	var testing := OS.has_environment("TP_TEST") or OS.has_environment("TP_SHOT")
+	var test_lot := OS.has_environment("TP_LOT")
+	var requested_screen := OS.get_environment("TP_SCREEN")
+	var go_to_creator := start_creator or requested_screen == "create"
+	var debug_lot := not go_to_creator and (testing or OS.has_environment("TP_FRESH") or test_lot)
+	start_creator = false
 	# Only the first of several pooled test runs may continue a save; the rest start new.
-	var fresh := skip_load or (testing and not OS.has_environment("TP_SAVE")) or OS.has_environment("TP_FRESH") or _run > 0
-	skip_load = false
-	if testing and not OS.has_environment("TP_SAVE"):
+	var fresh := go_to_creator or ((testing or test_lot) and not OS.has_environment("TP_SAVE")) or OS.has_environment("TP_FRESH") or _run > 0
+	if (testing or test_lot) and not OS.has_environment("TP_SAVE"):
 		save_path = "user://tp_test_save.json"
 	var data = null if fresh else _read_save()
 	var seed_v := randi()
@@ -110,21 +124,34 @@ func _ready() -> void:
 	world = World.new()
 	lot.add_child(world)
 	home.world = world
-	world.setup(seed_v, data["households"][0]["world"] if data != null else null)
+	var lot_option := OS.get_environment("TP_LOT") if data == null else ""
+	var starting_empty := lot_option == "empty"
+	var lot_seed := int(lot_option.get_slice(":", 1)) if lot_option.begins_with("vacant:") else seed_v
+	world.setup(lot_seed, data["households"][0]["world"] if data != null else null, starting_empty or (data == null and not debug_lot))
 	# The town draws from its own rng, seeded from the game's, so no other draw moves.
 	town = Town.new(hash("town %d" % seed_v))
-	town.add_home(0, seed_v)
+	if data != null or debug_lot:
+		town.add_home(0, lot_seed)
 	if data != null:
 		_load_household(data)
+	elif debug_lot:
+		var spec := random_spec()
+		if not lot_option.is_empty():
+			spec["money"] = Defs.START_FUNDS
+		if lot_option.begins_with("vacant:") and OS.has_environment("TP_RENT"):
+			_set_rental()
+			spec["money"] -= home.rent
+		start_household(spec)
 	else:
-		start_household(random_spec())
+		next_pid = 100
+		_create_neighbours()
 	if data != null and data.has("town"):
 		town = Town.from_dict(data["town"])
 	else:
 		town.fill()  # a new game, or a save from before towns: build the street around its households
 	cam = Cam.new()
 	lot.add_child(cam)
-	cam.position = Vector3(world.house.get_center().x + 0.5, 0, world.house.get_center().y + 1.0)
+	_centre_lot_camera()
 	ghost_mat = StandardMaterial3D.new()
 	ghost_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	ghost_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -140,13 +167,12 @@ func _ready() -> void:
 	if not people.is_empty():
 		select(people[0])
 	world.update_room_scores()
-	_update_light(true)
 	_last_day = day
 	if data != null:
 		msg("Welcome back, %s household." % family)
-	else:
+	elif not people.is_empty():
 		msg("Meet the %s household. Click things to give orders, or just watch. Press H for controls." % family)
-	if OS.has_environment("TP_TEST"):
+	if OS.has_environment("TP_TEST") and not people.is_empty():
 		_test_days = int(OS.get_environment("TP_TEST"))
 		if OS.has_environment("TP_RUNS"):
 			_runs = int(OS.get_environment("TP_RUNS"))
@@ -157,6 +183,8 @@ func _ready() -> void:
 			if p.tile != p.world.door_tile and p.world.path(p.world.door_tile, p.tile) == null:
 				print("STUCK: %s (household %d) starts at %s, which cannot be reached from the door" % [p.pname, p.household, p.tile])
 		sfx.set_muted(true)
+		if starting_empty:
+			_probe.furnish_test_lot(self)
 		if data == null:
 			for p in people:
 				if p.pid != 0:
@@ -176,8 +204,35 @@ func _ready() -> void:
 			minutes = float(OS.get_environment("TP_HOUR")) * 60.0
 		if OS.has_environment("TP_UI"):
 			ui.debug_open(OS.get_environment("TP_UI"))
-	if OS.has_environment("TP_SCREEN"):
-		set_screen(OS.get_environment("TP_SCREEN"))
+	if starting_empty and not OS.has_environment("TP_MODE"):
+		_open_build_session()
+	_update_light(true)
+	if go_to_creator:
+		open_creator()
+	elif not requested_screen.is_empty():
+		set_screen(requested_screen)
+	elif not debug_lot:
+		set_screen("town")
+
+
+func _centre_lot_camera() -> void:
+	var footprint := world.house_bounds()
+	var centre := footprint.get_center() if footprint.has_area() else Vector2i(World.W / 2, World.H / 2)
+	cam.position = Vector3(centre.x + 0.5, 0, centre.y + 1.0)
+	cam.dist = 26.0 if footprint.has_area() else 46.0
+	cam._apply()
+
+
+func _set_rental() -> void:
+	home.tenure = "rent"
+	home.rent = Household.rent_for(world.value())
+	for object in world.objects:
+		object.included = true
+
+
+func _open_build_session() -> void:
+	set_mode("build")
+	msg("Build walls, add a door and furnish your home before returning to Live.")
 
 
 func _make_person(id: int, sv: int, fam: String, hh: Household, spec := {}) -> Person:
@@ -218,21 +273,33 @@ func _rng_for(sv: int) -> RandomNumberGenerator:
 
 
 ## Moves the household in `spec` onto the player's lot, then fills the street around it.
-func start_household(spec: Dictionary) -> void:
+func start_household(spec: Dictionary, add_neighbours := true) -> void:
 	family = spec["family"]
 	home.family = family
 	home.money = int(spec["money"])
 	var spots := world.free_tiles_in("living")
+	if not world.house.has_area():
+		var entry := world.door_tile
+		spots = [entry, entry + Vector2i.LEFT, entry + Vector2i.RIGHT, entry + Vector2i.UP]
+	var furnished := world.house.has_area()
 	for i in spec["members"].size():
 		var p := _make_person(i, _member_seed(i), family, home, spec["members"][i])
-		p.tile = spots[rng.randi() % spots.size()]
+		var index: int = rng.randi() % spots.size() if furnished else i % spots.size()
+		p.tile = spots[index]
 		p.position = world.tile_center(p.tile)
 		p.rotation.y = rng.randf() * TAU
 	for a in people:
 		for b in people:
 			if a.pid < b.pid:
 				rel[_rk(a, b)] = rng.randf_range(5.0, 45.0)
-	next_pid = 100
+	for link in spec.get("relationships", []):
+		rel[_rk(people[link["a"]], people[link["b"]])] = link["value"]
+	next_pid = maxi(100, next_pid)
+	if add_neighbours:
+		_create_neighbours()
+
+
+func _create_neighbours() -> void:
 	for i in 3:
 		_new_family(rng.randi_range(1, 3), true)
 
@@ -345,6 +412,8 @@ func _update_light(force := false) -> void:
 	sfx.set_day(soft)
 	var n := soft < 0.35
 	if n != world.night:
+		if town_view != null:
+			town_view.set_night(n)
 		for hh in households.values():
 			hh.world.set_night(n)
 			hh.world.update_room_scores()
@@ -370,8 +439,9 @@ func _process(delta: float) -> void:
 			return
 	else:
 		var m: float = MULT[speed]
-		if m > 0.0 and not over:
+		if m > 0.0 and not over and screen == "lot" and mode == "live":
 			_step(delta * m / 60.0, delta * m)
+		_update_away_speed()
 	_update_light()
 	if screen == "lot":
 		_update_ghost()
@@ -456,9 +526,14 @@ func _new_day() -> void:
 			for o in hh.world.objects:
 				value += o.def["price"]
 			var bill := int(value * 0.03) + 25 * household_of(hh.id).size()
-			hh.money -= bill
+			hh.money -= bill + hh.rent
 			if hh.player:
-				msg("Bills paid: $%d." % bill)
+				if hh.tenure == "rent":
+					msg("Bills paid: $%d, including $%d rent." % [bill + hh.rent, hh.rent])
+					if hh.money < 0:
+						msg("You are behind on rent.", "error")
+				else:
+					msg("Bills paid: $%d." % bill)
 	if _test_days == 0 and _shot == "":
 		save_game(true)
 
@@ -563,7 +638,7 @@ func _spawn_child(pc: Dictionary) -> void:
 	var pa = _by_pid(int(pc["a"]))
 	var pb = _by_pid(int(pc["b"]))
 	var c := _make_child(pa, pb, hh)
-	var inside: Vector2i = hh.world.door_tile + Vector2i(0, -1)
+	var inside: Vector2i = hh.world.entry_inside
 	c.tile = inside if hh.world.walkable(inside) else hh.world.exit_tile
 	c.position = hh.world.tile_center(c.tile)
 	if hh.player:
@@ -640,6 +715,32 @@ func select(p: Person) -> void:
 
 
 func set_speed(s: int) -> void:
+	if mode != "live":
+		if s == 0 and live_speed > 0:
+			prev_speed = live_speed
+		live_speed = s
+		return
+	if skip_speed >= 0:
+		skip_speed = -1
+		skip_disabled_day = day
+	_apply_speed(s)
+
+
+func _update_away_speed() -> void:
+	if screen != "lot" or mode != "live" or over:
+		return
+	var all_away := not people.is_empty() and people.all(func(p): return p.away)
+	if skip_speed >= 0 and not all_away:
+		var restore := skip_speed
+		skip_speed = -1
+		_apply_speed(restore)
+	elif all_away and speed > 0 and skip_speed < 0 and skip_disabled_day != day:
+		skip_speed = speed
+		_apply_speed(3)
+		msg("Everyone's out. Skipping ahead.")
+
+
+func _apply_speed(s: int) -> void:
 	if s == 0 and speed != 0:
 		prev_speed = speed
 	speed = s
@@ -647,33 +748,25 @@ func set_speed(s: int) -> void:
 		p.loop_p.stream_paused = s == 0
 
 
-## Lists what each screen shows. The town is a placeholder for now: a name tag, and a
-## camera left where the lot's camera starts so that a lot still drawn would be seen.
 func _build_screens() -> void:
-	var town := CanvasLayer.new()
-	add_child(town)
-	var tag := PanelContainer.new()
-	tag.theme = ui.root.theme
-	tag.position = Vector2(12, 12)
-	town.add_child(tag)
-	var l := Label.new()
-	l.text = "Town"
-	l.add_theme_color_override("font_color", UI.MUTED)
-	tag.add_child(l)
-	var town_cam := Camera3D.new()
-	add_child(town_cam)
-	town_cam.global_transform = cam.cam.global_transform
-	town_cam.fov = cam.cam.fov
-	screens = {"lot": [lot, ui, cam.cam], "town": [town, town_cam]}
-	for n in screens["town"]:
-		_show_node(n, false)
+	town_view = TownView.new()
+	add_child(town_view)
+	town_view.lot_picked.connect(_select_town_lot)
+	town_ui = UITown.new()
+	town_ui.game = self
+	add_child(town_ui)
+	screens = {"lot": [lot, ui, cam.cam], "town": [town_view, town_ui, town_view.rig.cam]}
+	_show_node(town_view, false)
+	_show_node(town_ui, false)
+	_show_node(town_view.rig.cam, false)
+	cam.cam.make_current()
 
 
-## Shows one screen and hides the rest. A hidden screen's nodes stop processing as well,
-## so its camera and controls ignore the mouse and keys.
 func set_screen(s: String) -> void:
 	if not screens.has(s):
 		push_error("There is no screen called '%s'." % s)
+		return
+	if s == "lot" and people.is_empty() and not over:
 		return
 	screen = s
 	for k in screens:
@@ -686,6 +779,8 @@ func set_screen(s: String) -> void:
 		drag_start = null
 		ui.menu.hide()
 		ui.opt_menu.hide()
+	if s == "town":
+		_refresh_town()
 
 
 func _show_node(n: Node, on: bool) -> void:
@@ -695,7 +790,124 @@ func _show_node(n: Node, on: bool) -> void:
 		n.current = on
 
 
+func return_to_town() -> void:
+	save_game(true)
+	set_screen("town")
+
+
+func _refresh_town() -> void:
+	var descriptions := {}
+	for record in town.lots:
+		descriptions[record["id"]] = _describe_lot(record)
+	town_view.rebuild(town, households, descriptions, world.night)
+	town_ui.show_street(household_draft)
+	var owned = town.lot_of(home.id)
+	if owned != null:
+		_select_town_lot(owned["id"])
+	else:
+		_select_town_lot(selected_lot)
+
+
+func _describe_lot(record: Dictionary) -> Dictionary:
+	match record["kind"]:
+		"home":
+			var hh: Household = households[record["household"]]
+			return _describe_world(hh.world)
+		"vacant":
+			var lot_seed: int = record["seed"]
+			if not home_previews.has(lot_seed):
+				var preview_world := World.new()
+				preview_world.headless = true
+				preview_world.setup(lot_seed)
+				home_previews[lot_seed] = _describe_world(preview_world)
+				preview_world.free()
+			return home_previews[lot_seed]
+	return {}
+
+
+func _describe_world(w: World) -> Dictionary:
+	return {"house": w.house_bounds(), "colour": w.wall_color, "value": w.value()}
+
+
+func _select_town_lot(id: int) -> void:
+	selected_lot = id
+	town_view.select(id)
+	var record = town.lot(id)
+	town_ui.show_lot(record, {} if record == null else _describe_lot(record), household_draft)
+	if record != null and OS.has_environment("TP_TOWN_TRACE"):
+		print("Town card: ", town_ui.card.get_child(0).text)
+
+
+func open_creator() -> void:
+	if creator == null:
+		creator = UICreate.new()
+		creator.ui = ui
+		creator.finished.connect(_created_household)
+		creator.cancelled.connect(set_screen.bind("town"))
+		add_child(creator)
+		screens["create"] = [creator]
+	creation_count += 1
+	creator.open(hash("creator %d %d" % [seed_base, creation_count]), household_draft)
+	set_screen("create")
+
+
+func _created_household(spec: Dictionary) -> void:
+	household_draft = spec
+	if OS.has_environment("TP_TOWN_TRACE"):
+		print("Household draft: ", spec)
+	set_screen("town")
+
+
+func claim_home(id: int, rental: bool) -> void:
+	if household_draft.is_empty() or not people.is_empty():
+		return
+	var record = town.lot(id)
+	if record == null or record["kind"] == "home":
+		return
+	var empty: bool = record["kind"] == "empty"
+	if empty and rental:
+		return
+	var cost := Defs.LOT_PRICE
+	if not empty:
+		var value: int = _describe_lot(record)["value"]
+		cost = Household.rent_for(value) if rental else value
+	if household_draft["money"] < cost:
+		return
+
+	var old_world := world
+	world = World.new()
+	lot.add_child(world)
+	home.world = world
+	world.setup(record["seed"], null, empty)
+	world.set_night(old_world.night)
+	old_world.free()
+	town.occupy(id, home.id)
+	if rental:
+		_set_rental()
+	var spec := household_draft
+	household_draft = {}
+	spec["money"] -= cost
+	start_household(spec, false)
+	select(people[0])
+	world.update_room_scores()
+	_centre_lot_camera()
+	set_screen("lot")
+	if empty:
+		_open_build_session()
+	else:
+		msg("The %s household has moved in." % family)
+	save_game(true)
+
+
 func set_mode(m: String) -> void:
+	if m == "build" and home.tenure == "rent":
+		return
+	if mode == "live" and m != "live":
+		live_speed = skip_speed if skip_speed >= 0 else speed
+		skip_speed = -1
+		_apply_speed(0)
+	elif mode != "live" and m == "live":
+		_apply_speed(live_speed)
 	mode = m
 	set_buy("")
 	tool = ""
@@ -745,14 +957,14 @@ func cancel_action(p: Person, i: int) -> void:
 # ---------------------------------------------------------------- saving
 
 func save_game(quiet := false) -> void:
-	if over:
+	if over or people.is_empty():
 		return
 	var hhs := []
 	for id in households:  # the player's household (id 0) was added first
 		var hh: Household = households[id]
-		hhs.append({"id": hh.id, "family": hh.family, "money": hh.money, "world": hh.world.save_state()})
+		hhs.append({"id": hh.id, "family": hh.family, "money": hh.money, "world": hh.world.save_state(), "tenure": hh.tenure, "rent": hh.rent})
 	var d := {
-		"v": 2, "seed": seed_base, "minutes": minutes, "rel": rel,
+		"v": 2, "career_catalog": 1, "seed": seed_base, "minutes": minutes, "rel": rel,
 		"next_pid": next_pid, "next_hh": next_hh, "welcomed": welcomed, "pending": pending, "free_will": free_will,
 		"households": hhs, "town": town.to_dict(),
 		"people": everyone().map(func(p): return p.save_state()),
@@ -771,9 +983,28 @@ func _read_save():
 	if not FileAccess.file_exists(save_path):
 		return null
 	var d = JSON.parse_string(FileAccess.get_file_as_string(save_path))
-	if d is Dictionary and d.get("v") == 2 and d.has("households") and int(d["households"][0]["id"]) == 0:
+	if d is Dictionary and d.get("v") == 2 and d.has("households") and not d["households"].is_empty() and int(d["households"][0]["id"]) == 0:
+		if not d.has("career_catalog"):
+			_migrate_catalog(d)
 		return d
 	return null
+
+
+func _migrate_catalog(data: Dictionary) -> void:
+	for hh in data["households"]:
+		var objects: Array = hh["world"]["objects"]
+		var kept := objects.filter(func(o): return o["k"] != "easel")
+		hh["money"] += 350 * (objects.size() - kept.size())
+		hh["world"]["objects"] = kept
+	for p in data["people"]:
+		var job = p.get("job")
+		if job == null:
+			continue
+		var index := int(job["career"])
+		if index == 2:
+			p["job"] = {"career": posmod(int(p["pid"]), Defs.CAREERS.size()), "level": 0, "perf": 0.0}
+		elif index > 2:
+			job["career"] = index - 1
 
 
 func _load_household(d: Dictionary) -> void:
@@ -785,6 +1016,8 @@ func _load_household(d: Dictionary) -> void:
 		var hh: Household = home if int(hd["id"]) == 0 else _add_household(int(hd["id"]), hd["world"])
 		hh.family = hd["family"]
 		hh.money = int(hd["money"])
+		hh.tenure = hd.get("tenure", "own")
+		hh.rent = int(hd.get("rent", 0))
 	family = home.family
 	for pc in d.get("pending", []):
 		pending.append({"at": float(pc["at"]), "hh": int(pc["hh"]), "a": int(pc["a"]), "b": int(pc["b"])})
@@ -805,7 +1038,7 @@ func load_game() -> void:
 
 
 func new_game() -> void:
-	skip_load = true
+	start_creator = true
 	get_tree().reload_current_scene()
 
 
@@ -856,7 +1089,9 @@ func _unhandled_input(e: InputEvent) -> void:
 		return
 	if e is InputEventKey and e.pressed and not e.echo:
 		match e.keycode:
-			KEY_SPACE: set_speed(prev_speed if speed == 0 else 0)
+			KEY_SPACE:
+				var current := live_speed if mode != "live" else speed
+				set_speed(prev_speed if current == 0 else 0)
 			KEY_1: set_speed(1)
 			KEY_2: set_speed(2)
 			KEY_3: set_speed(3)
@@ -866,6 +1101,7 @@ func _unhandled_input(e: InputEvent) -> void:
 			KEY_R: buy_rot = (buy_rot + 1) % 4
 			KEY_F: toggle_walls()
 			KEY_H: ui.toggle_help()
+			KEY_T: return_to_town()
 			KEY_M: sfx.set_muted(not sfx.muted)
 			KEY_F5: save_game()
 			KEY_F9: load_game()
@@ -890,7 +1126,7 @@ func _unhandled_input(e: InputEvent) -> void:
 				ui.build_side()
 	elif e is InputEventMouseMotion and e.button_mask & MOUSE_BUTTON_MASK_LEFT:
 		if mode == "build" and tool.begins_with("floor"):
-			_paint(e.position)
+			_apply_floor(e.position)
 
 
 func _click(mpos: Vector2) -> void:
@@ -985,6 +1221,8 @@ func _placeable(a: Vector2i) -> bool:
 	if not world.can_place(buy_kind, a.x, a.y, buy_rot):
 		return false
 	var d := world.kind_dims(buy_kind, buy_rot)
+	if Rect2i(a, d).has_point(world.exit_tile):
+		return false
 	for p in present(world):
 		if Rect2i(a, d).has_point(p.tile):
 			return false
@@ -994,7 +1232,7 @@ func _placeable(a: Vector2i) -> bool:
 func _click_buy(mpos: Vector2) -> void:
 	if sell:
 		var o = pick_object(mpos)
-		if o != null and o.kind != "puddle":
+		if o != null and o.kind != "puddle" and not (home.tenure == "rent" and o.included):
 			var v := int(o.def["price"] * 0.7)
 			remove_object(o)
 			money += v
@@ -1033,6 +1271,8 @@ func _nearest_edge(mpos: Vector2) -> Vector3i:
 
 
 func _click_build(mpos: Vector2) -> void:
+	if home.tenure == "rent":
+		return
 	match tool:
 		"wall", "erase":
 			drag_start = _corner(mpos)
@@ -1048,11 +1288,11 @@ func _click_build(mpos: Vector2) -> void:
 				sfx.play("error")
 		_:
 			if tool.begins_with("floor"):
-				_paint(mpos)
+				_apply_floor(mpos)
 
 
 func _release(mpos: Vector2) -> void:
-	if mode != "build" or drag_start == null:
+	if mode != "build" or drag_start == null or home.tenure == "rent":
 		return
 	var a: Vector2i = drag_start
 	var b := _corner(mpos)
@@ -1078,10 +1318,13 @@ func _release(mpos: Vector2) -> void:
 func _walls_changed() -> void:
 	world.rebuild_walls()
 	world.nav_dirty = true
+	world.update_entry()
 	world.update_room_scores()
 
 
-func _paint(mpos: Vector2) -> void:
+func _apply_floor(mpos: Vector2) -> void:
+	if home.tenure == "rent":
+		return
 	var t := pick_tile(mpos)
 	if not world.inb(t):
 		return
@@ -1126,6 +1369,8 @@ func _update_ghost() -> void:
 
 func _report() -> void:
 	print("=== %d days simulated, household %d, over=%s ===" % [day, people.size(), over])
+	if OS.has_environment("TP_LOT"):
+		print("Starting funds $%d, lot price $%d, tenure %s, rent $%d" % [Defs.START_FUNDS, Defs.LOT_PRICE, home.tenure, home.rent])
 	for id in households:
 		var hh: Household = households[id]
 		print("--- household %d %s%s: $%d, %d objects" % [id, hh.family, " (player)" if hh.player else "", hh.money, hh.world.objects.size()])

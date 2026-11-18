@@ -77,10 +77,10 @@ func vacate(household: int) -> void:
 		l["seed"] = int(rng.randi())
 
 
-## A household moves into a vacant home. Returns the lot, or null if it is not vacant.
-func take_vacant(id: int, household: int) -> Variant:
+## A household takes an available home or empty lot.
+func occupy(id: int, household: int) -> Variant:
 	var l = lot(id)
-	if l == null or l["kind"] != "vacant":
+	if l == null or l["kind"] not in ["empty", "vacant"]:
 		return null
 	l["kind"] = "home"
 	l["household"] = household

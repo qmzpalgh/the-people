@@ -46,12 +46,20 @@ const MOOD_W := {
 	"hunger": 1.5, "energy": 1.5, "hygiene": 1.0, "bladder": 1.2,
 	"fun": 1.0, "social": 1.0, "comfort": 0.8, "room": 0.6,
 }
-const SKILLS := ["cooking", "logic", "creativity", "fitness", "charisma"]
+const SKILLS := ["cooking", "logic", "fitness", "charisma"]
 ## Skills run 0..10. An interaction's "skill" rate is levels per game hour at level 0;
 ## each level already held makes the next one take SKILL_SLOWDOWN of a first level
 ## longer (see skill_pace). SCHOOL_LOGIC is the practice a school day is worth.
 const SKILL_SLOWDOWN := 1.0
 const SCHOOL_LOGIC := 0.12
+const SKIN_TONES := [Color(0.96, 0.8, 0.68), Color(0.87, 0.67, 0.5), Color(0.72, 0.5, 0.35), Color(0.52, 0.35, 0.24), Color(0.36, 0.24, 0.17)]
+const HAIR_COLORS := [Color(0.1, 0.08, 0.07), Color(0.35, 0.22, 0.12), Color(0.75, 0.6, 0.3), Color(0.6, 0.25, 0.12), Color(0.3, 0.4, 0.7)]
+const HAIR_STYLES := ["Short", "Long", "Bun", "Flat top"]
+const HEIGHT_RANGE := Vector2(0.9, 1.08)
+const WIDTH_RANGE := Vector2(0.9, 1.15)
+const START_FUNDS := 14500
+const LOT_PRICE := 2500
+const RENT_RATE := 0.06
 const TRAITS := ["neat", "outgoing", "active", "playful", "nice"]
 const DAYS := ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 ## Front direction of an object for rotation 0..3 (tile space, y = world z).
@@ -133,10 +141,6 @@ const OBJECTS := {
 			{"id": "job", "label": "Find a job", "needs": {"comfort": 10.0}, "dur": 0.5, "pose": "sit", "cond": "no_job", "special": "job", "adult": true, "snd": "keys"},
 			{"id": "puzzle", "label": "Solve puzzles", "needs": {"fun": 4.0, "comfort": 10.0}, "skill": {"logic": 0.5}, "dur": 2.0, "pose": "sit", "mood_min": 45, "snd": "keys"},
 		],
-	},
-	"easel": {
-		"name": "Easel", "price": 350, "cat": "Skills", "size": Vector2i(1, 1), "room": 1.0, "h": 1.5,
-		"acts": [{"id": "paint", "label": "Paint (sells when done)", "needs": {"fun": 9.0}, "skill": {"creativity": 0.45}, "dur": 2.5, "special": "paint", "mood_min": 45}],
 	},
 	"weights": {
 		"name": "Weight bench", "price": 450, "cat": "Skills", "size": Vector2i(1, 2), "h": 1.0,
@@ -230,8 +234,6 @@ const CAREERS := [
 		"titles": ["Dishwasher", "Line Cook", "Sous Chef", "Head Chef", "Restaurateur"]},
 	{"name": "Science", "skill": "logic", "start": 9.0, "hours": 8.0, "pay": [100, 150, 220, 320, 450],
 		"titles": ["Lab Assistant", "Technician", "Researcher", "Lead Scientist", "Institute Director"]},
-	{"name": "Arts", "skill": "creativity", "start": 11.0, "hours": 6.0, "pay": [70, 120, 200, 300, 440],
-		"titles": ["Gallery Sitter", "Illustrator", "Designer", "Art Director", "Celebrated Artist"]},
 	{"name": "Athletics", "skill": "fitness", "start": 7.0, "hours": 7.0, "pay": [80, 130, 210, 310, 460],
 		"titles": ["Ball Fetcher", "Bench Warmer", "Starter", "Team Captain", "Champion"]},
 	{"name": "Business", "skill": "charisma", "start": 8.0, "hours": 9.0, "pay": [110, 160, 230, 330, 480],

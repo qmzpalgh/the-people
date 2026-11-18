@@ -140,15 +140,6 @@ static func build_object(p: Node3D, kind: String, rng: RandomNumberGenerator) ->
 			box(p, Vector3(0.36, 0.02, 0.12), Vector3(0, 0.76, -0.14), DARK.lightened(0.2))
 			cyl(p, 0.18, 0.18, 0.06, Vector3(0, 0.44, 0.25), ac)
 			cyl(p, 0.04, 0.04, 0.42, Vector3(0, 0.21, 0.25), METAL)
-		"easel":
-			for sx in [-1.0, 1.0]:
-				box(p, Vector3(0.05, 1.6, 0.05), Vector3(sx * 0.25, 0.8, -0.1), WOOD).rotation.x = -0.15
-			box(p, Vector3(0.05, 1.5, 0.05), Vector3(0, 0.75, -0.32), WOOD).rotation.x = 0.25
-			box(p, Vector3(0.62, 0.04, 0.08), Vector3(0, 0.85, -0.04), WOOD)
-			box(p, Vector3(0.6, 0.5, 0.03), Vector3(0, 1.13, -0.08), WHITE)
-			for i in 5:
-				box(p, Vector3(rng.randf_range(0.08, 0.2), rng.randf_range(0.06, 0.18), 0.005),
-					Vector3(rng.randf_range(-0.18, 0.18), 1.13 + rng.randf_range(-0.14, 0.14), -0.062), accent(rng, 0.7, 0.85))
 		"weights":
 			box(p, Vector3(0.4, 0.1, 1.3), Vector3(0, 0.42, 0.1), DARK.lightened(0.15))
 			_legs(p, 0.15, 0.5, 0.38, METAL)

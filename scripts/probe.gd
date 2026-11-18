@@ -24,6 +24,23 @@ func begin(g) -> void:
 	runs += 1
 
 
+## The empty-lot smoke test checks the bare start, then supplies basic furniture
+## so it can exercise the simulation for several days.
+func furnish_test_lot(g) -> void:
+	assert(g.world.objects.is_empty() and g.world.walls.is_empty())
+	assert(g.world.door_tile == g.world.exit_tile and g.money == Defs.START_FUNDS)
+	print("Empty lot verified at the kerb. Furnishing for the simulation.")
+	for item in [
+		["bed_double", 10, 21], ["bed_double", 14, 21], ["bed_double", 18, 21],
+		["fridge", 21, 22], ["fridge", 23, 22], ["stove", 25, 22], ["chair", 26, 24],
+		["toilet", 10, 26], ["toilet", 13, 26], ["shower", 15, 25], ["shower", 22, 26],
+		["sofa", 22, 24], ["stereo", 24, 24],
+	]:
+		var kind: String = item[0]
+		g.world.add_object(kind, item[1], item[2], 0)
+		g.money -= Defs.OBJECTS[kind]["price"]
+
+
 func _group(p) -> String:
 	match p.stage():
 		"child": return "child"
@@ -80,6 +97,8 @@ func step(dh: float) -> void:
 			t["meal"] = p.meal_t
 			t["eaten"] = p.stats.get("Eat", 0)
 		if asleep and t["sleep"] == null:
+			if OS.has_environment("TP_SLEEP_TRACE") and game.day == 0 and p.resident and p.stage() == "adult":
+				print("Day 0 sleep: %s %s %.2f" % [p.first(), lab, h])
 			# Counted from the moment it starts, so sleep still running at the end of
 			# the run is not lost; length and energy come from finished sessions only.
 			t["sleep"] = [g, lab, h, 0.0, p.needs.energy, 0.0, false]
