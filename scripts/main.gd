@@ -182,7 +182,12 @@ func _ready() -> void:
 		set_screen(OS.get_environment("TP_SCREEN"))
 	elif not testing or OS.has_environment("TP_BOOT"):
 		# A normal launch opens on the town. TP_BOOT lets a test run do the same.
-		town_view.open_home()
+		# Nothing has written the save since the top of _ready(), so no file here means no save
+		# was there at launch. A launch with no household yet asks for one.
+		if FileAccess.file_exists(save_path):
+			town_view.open_home()
+		else:
+			town_view.ask_create()
 		set_screen("town")
 	if OS.has_environment("TP_TOWN_TRIP"):
 		add_child(TownTrip.new(self))

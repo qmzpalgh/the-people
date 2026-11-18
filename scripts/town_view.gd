@@ -83,6 +83,11 @@ func refresh() -> void:
 	open_home()
 
 
+## The first launch, with no save: no lot is framed and no card is open, only the prompt.
+func ask_create() -> void:
+	hud.show_prompt()
+
+
 ## A flat tint the size of a lot, moved onto the lot that is hovered or picked.
 func _marker(c: Color) -> MeshInstance3D:
 	var m := MeshInstance3D.new()
@@ -148,6 +153,8 @@ func _show_marker(m: MeshInstance3D, id: int) -> void:
 
 ## A click on a lot opens its card; a click on nothing closes it. Returns the card title.
 func click(mpos: Vector2) -> String:
+	if hud.asking():
+		return ""
 	var l = lot_at(mpos)
 	picked = -1 if l == null else l["id"]
 	_show_marker(_pick_n, picked)
@@ -164,6 +171,9 @@ func _process(_dt: float) -> void:
 		var id := int(OS.get_environment("TP_TOWN_CLICK"))
 		var a := origin(town.lot(id)) + Vector3(World.W / 2.0, 0, World.H / 2.0)
 		print("town card: ", click(cam.cam.unproject_position(a)))
+	if _frame == 8 and OS.has_environment("TP_TOWN_CREATE") and hud.asking():
+		hud.create_btn.pressed.emit()
+		print("town create: screen ", game.screen, ", prompt ", hud.asking())
 	if _frame == 8 and OS.has_environment("TP_TOWN_PLAY"):
 		hud.play_btn.pressed.emit()
 		print("town play: screen ", game.screen, ", speed ", game.speed)

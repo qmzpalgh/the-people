@@ -8,6 +8,8 @@ var ui: UI
 var card: PanelContainer
 var body: VBoxContainer
 var play_btn: Button
+var prompt: CenterContainer
+var create_btn: Button
 var title := ""             # the card's title now, "" when the card is closed
 
 
@@ -30,6 +32,38 @@ func _ready() -> void:
 	body.add_theme_constant_override("separation", 6)
 	card.add_child(body)
 	card.hide()
+	prompt = CenterContainer.new()
+	prompt.set_anchors_preset(Control.PRESET_FULL_RECT)
+	prompt.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(prompt)
+	var pc := PanelContainer.new()
+	pc.custom_minimum_size.x = 320
+	prompt.add_child(pc)
+	var pv := VBoxContainer.new()
+	pv.add_theme_constant_override("separation", 8)
+	pc.add_child(pv)
+	ui._label(pv, "Welcome to town", 17)
+	ui._label(pv, "No household lives here yet.", 13).add_theme_color_override("font_color", UI.MUTED)
+	create_btn = ui._btn(pv, "Create a household", _create)
+	create_btn.add_theme_stylebox_override("normal", ui._sb(UI.INK))
+	create_btn.add_theme_stylebox_override("hover", ui._sb(UI.INK.lightened(0.15)))
+	create_btn.add_theme_color_override("font_color", Color.WHITE)
+	create_btn.add_theme_color_override("font_hover_color", Color.WHITE)
+	prompt.hide()
+
+
+func show_prompt() -> void:
+	prompt.show()
+
+
+func asking() -> bool:
+	return prompt.visible
+
+
+## Until the household creator exists, this starts the random household already loaded.
+func _create() -> void:
+	prompt.hide()
+	game.set_screen("lot")
 
 
 ## Opens the card for a lot, or closes it for null.
