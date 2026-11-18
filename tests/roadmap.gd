@@ -117,6 +117,7 @@ func _run() -> void:
 	game.free()
 	game = await _boot(true)
 	assert(game.screen == "town")
+	_check_saved_resume(game)
 	assert(game.minutes == float(state["minutes"]))
 	assert(game.money == int(state["households"][0]["money"]))
 	assert(game.world.save_state() == saved_world)
@@ -249,6 +250,23 @@ func _check_town_round_trip(game) -> void:
 	print("PASS: simulation paused in Build and Town, speed restored, card tabs held their position")
 
 
+func _check_saved_resume(game) -> void:
+	var clock: float = game.minutes
+	var balance: int = game.money
+	var home: Household = game.home
+	var roster: Array = game.people.duplicate()
+	var neighbour_lot: int = game.town.lot_of(game.neighbours[0].hh.id)["id"]
+	for id in [_find_lot(game, "empty"), _find_lot(game, "vacant"), neighbour_lot]:
+		game._select_town_lot(id)
+		assert(game.town_view.selected == id and _button(game.town_ui.card, "Play") == null)
+		game._process(20.0)
+		_press(game.town_ui.banner, "Resume household · Vale")
+		assert(game.screen == "lot" and game.minutes == clock and game.money == balance)
+		assert(game.home == home and game.people == roster and game.world == home.world)
+		game.return_to_town()
+	print("PASS: saved household, clock and balance survive resuming from each other lot type")
+
+
 func _check_migration(game, state: Dictionary) -> void:
 	var old := state.duplicate(true)
 	old.erase("town")
@@ -328,6 +346,25 @@ func _check_vacant(rental: bool) -> void:
 
 func _check_restart_routes() -> void:
 	var game = await _boot(true)
+	var original_save := FileAccess.get_file_as_string(save_path)
+	var original_home: Household = game.home
+	_press(game.town_ui.banner, "Create a household")
+	assert(game.screen == "create")
+	_press(game.creator, "Back to town")
+	assert(game.screen == "town" and game.home == original_home)
+	_press(game.town_ui.banner, "Resume household · %s" % original_home.family)
+	assert(game.screen == "lot")
+	game.set_screen("town")
+	_press(game.town_ui.banner, "Create a household")
+	game.creator._finish()
+	await scene_changed
+	game = current_scene
+	assert(game.screen == "town" and game.people.is_empty())
+	assert(FileAccess.get_file_as_string(save_path) == original_save)
+	game._select_town_lot(_find_lot(game, "empty"))
+	_press(game.town_ui.card, "Buy lot")
+	assert(game.screen == "lot" and not game.people.is_empty())
+	print("PASS: town creator can cancel to the original household or move a new household in")
 	game.set_screen("lot")
 	game.ui._on_option(5)
 	await scene_changed

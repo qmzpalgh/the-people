@@ -7,6 +7,7 @@ const MULT := [0.0, 1.0, 4.0, 12.0]
 const Probe := preload("res://scripts/probe.gd")
 
 static var start_creator := false
+static var new_household_draft := {}
 static var _run := 0
 static var _probe: RefCounted
 
@@ -95,6 +96,8 @@ func _ready() -> void:
 	var testing := OS.has_environment("TP_TEST") or OS.has_environment("TP_SHOT")
 	var test_lot := OS.has_environment("TP_LOT")
 	var requested_screen := OS.get_environment("TP_SCREEN")
+	household_draft = new_household_draft
+	new_household_draft = {}
 	var go_to_creator := start_creator or requested_screen == "create"
 	var debug_lot := not go_to_creator and (testing or OS.has_environment("TP_FRESH") or test_lot)
 	start_creator = false
@@ -207,7 +210,9 @@ func _ready() -> void:
 	if starting_empty and not OS.has_environment("TP_MODE"):
 		_open_build_session()
 	_update_light(true)
-	if go_to_creator:
+	if not household_draft.is_empty():
+		set_screen("town")
+	elif go_to_creator:
 		open_creator()
 	elif not requested_screen.is_empty():
 		set_screen(requested_screen)
@@ -852,6 +857,11 @@ func open_creator() -> void:
 
 
 func _created_household(spec: Dictionary) -> void:
+	if not people.is_empty():
+		# Start house hunting in a fresh town. The previous save lasts until move-in.
+		new_household_draft = spec
+		new_game()
+		return
 	household_draft = spec
 	if OS.has_environment("TP_TOWN_TRACE"):
 		print("Household draft: ", spec)

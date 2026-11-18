@@ -49,6 +49,9 @@ func show_street(spec: Dictionary) -> void:
 	elif game.people.is_empty():
 		game.ui._btn(banner, "Create a household", game.open_creator)
 	else:
+		if not game.over:
+			game.ui._btn(banner, "Resume household · %s" % game.home.family, game.set_screen.bind("lot"))
+		game.ui._btn(banner, "Create a household", game.open_creator)
 		game.ui._label(banner, "Select a lot to see who lives there.", 14)
 
 
