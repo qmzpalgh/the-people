@@ -34,6 +34,8 @@ var skin_btns: Array = []
 var hair_btns: Array = []
 var shirt_btns: Array = []
 var pants_btns: Array = []
+var h_slider: HSlider
+var wide_slider: HSlider
 var _frames := 0
 var _after_done := false
 
@@ -105,6 +107,8 @@ func setup(g) -> Array:
 	hair_btns = _swatches(box, "Hair colour", Defs.HAIR_COLOURS, set_hair)
 	shirt_btns = _swatches(box, "Shirt", Defs.SHIRT_COLOURS, set_shirt)
 	pants_btns = _swatches(box, "Trousers", Defs.TROUSER_COLOURS, set_pants)
+	h_slider = _slider(box, "Height", Defs.HEIGHT_RANGE, set_height)
+	wide_slider = _slider(box, "Build", Defs.WIDTH_RANGE, set_build)
 	why_l = ui._label(box, "", 12)
 	why_l.add_theme_color_override("font_color", UI.MUTED)
 	why_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -136,6 +140,10 @@ func setup(g) -> Array:
 			var p := kv.split("=")
 			if p[0] == "style":
 				set_style(int(p[1]))
+			elif p[0] == "h":
+				set_height(float(p[1]))
+			elif p[0] == "wide":
+				set_build(float(p[1]))
 			elif p[0] == "shirt":
 				set_shirt(int(p[1]))
 			elif p[0] == "pants":
@@ -284,6 +292,41 @@ func set_style(i: int) -> void:
 	_select(sel)
 
 
+## A quiet slider over `range`, with a small muted label.
+func _slider(box: Node, label: String, range: Vector2, changed: Callable) -> HSlider:
+	var ui: UI = game.ui
+	var l := ui._label(box, label, 12)
+	l.add_theme_color_override("font_color", UI.MUTED)
+	var s := HSlider.new()
+	s.min_value = range.x
+	s.max_value = range.y
+	s.step = 0.005
+	s.custom_minimum_size.y = 18
+	s.focus_mode = Control.FOCUS_NONE
+	var track: StyleBoxFlat = ui._sb(Color(0.86, 0.88, 0.87), 3, 0, 0)
+	track.content_margin_top = 3
+	track.content_margin_bottom = 3
+	var fill: StyleBoxFlat = ui._sb(UI.INK, 3, 0, 0)
+	fill.content_margin_top = 3
+	fill.content_margin_bottom = 3
+	s.add_theme_stylebox_override("slider", track)
+	s.add_theme_stylebox_override("grabber_area", fill)
+	s.add_theme_stylebox_override("grabber_area_highlight", fill)
+	s.value_changed.connect(changed)
+	box.add_child(s)
+	return s
+
+
+func set_height(v: float) -> void:
+	members[sel]["look"]["h"] = clampf(v, Defs.HEIGHT_RANGE.x, Defs.HEIGHT_RANGE.y)
+	_select(sel)
+
+
+func set_build(v: float) -> void:
+	members[sel]["look"]["wide"] = clampf(v, Defs.WIDTH_RANGE.x, Defs.WIDTH_RANGE.y)
+	_select(sel)
+
+
 func set_shirt(i: int) -> void:
 	members[sel]["look"]["shirt"] = Defs.SHIRT_COLOURS[i]
 	_select(sel)
@@ -336,6 +379,8 @@ func _refresh() -> void:
 	_style_swatches(hair_btns, Defs.HAIR_COLOURS, m["look"]["hair"])
 	_style_swatches(shirt_btns, Defs.SHIRT_COLOURS, m["look"]["shirt"])
 	_style_swatches(pants_btns, Defs.TROUSER_COLOURS, m["look"]["pants"])
+	h_slider.set_value_no_signal(m["look"]["h"])
+	wide_slider.set_value_no_signal(m["look"]["wide"])
 	_rebuild_chips()
 	var why := _problem()
 	done_b.disabled = why != ""
