@@ -114,6 +114,8 @@ func _ready() -> void:
 	# keeps the lot it was made on.
 	var lot_kind := OS.get_environment("TP_LOT") if data == null else ""
 	world.setup(seed_v, data["households"][0]["world"] if data != null else null, lot_kind == "empty")
+	if lot_kind == "empty" and OS.has_environment("TP_ROOM"):
+		_room_test.call_deferred()  # once the camera and HUD it clicks through exist
 	# The town draws from its own rng, seeded from the game's, so no other draw moves.
 	town = Town.new(hash("town %d" % seed_v))
 	town.add_home(0, seed_v)
@@ -1084,6 +1086,58 @@ func _walls_changed() -> void:
 	world.rebuild_walls()
 	world.nav_dirty = true
 	world.update_room_scores()
+	world.update_front_door()
+
+
+## Where a point on the ground shows on screen, for scripted clicks.
+func _at(x: float, y: float) -> Vector2:
+	return cam.cam.unproject_position(Vector3(x, 0, y))
+
+
+## TP_ROOM (with TP_LOT=empty): builds a 5 x 5 room with a door in its south wall through the
+## player's own build clicks, then brings a neighbour over, printing where the front door is
+## and where the visitor stops. Then checks the fallbacks: a second door on the west wall,
+## the south door made a window, and the west door erased.
+func _room_test() -> void:
+	set_mode("build")
+	tool = "wall"
+	var c := [Vector2(10, 14), Vector2(15, 14), Vector2(15, 19), Vector2(10, 19), Vector2(10, 14)]
+	for i in 4:
+		_click_build(_at(c[i].x, c[i].y))
+		_release(_at(c[i + 1].x, c[i + 1].y))
+	tool = "door"
+	_click_build(_at(12.5, 19.05))
+	set_mode("live")
+	print("ROOM built: %d wall edges, door edge (12, 19, 0) = %d, money $%d" % [world.walls.size(), world.walls.get(Vector3i(12, 19, 0), 0), money])
+	print("ROOM front door tile: %s (kerb entry %s)" % [world.door_tile, world.exit_tile])
+	var v = null
+	for i in 1440:
+		if v == null:
+			v = available_neighbour()
+			if v != null:
+				v.start_visit(true)
+				print("ROOM visitor sent: %s at %05.2f" % [v.pname, hour()])
+		elif not is_instance_valid(v) or v.vstate == "waiting":
+			break
+		_step(1.0 / 60.0, 1.0)
+		if _probe != null and _test_days > 0:
+			_probe.step(1.0 / 60.0)
+	if v != null and is_instance_valid(v) and v.vstate == "waiting":
+		print("ROOM visitor %s arrived at %s at %05.2f (front door %s)" % [v.pname, v.tile, hour(), world.door_tile])
+	else:
+		print("ROOM visitor did not arrive")
+	set_mode("build")
+	tool = "door"
+	_click_build(_at(10.05, 16.5))
+	print("ROOM second door on the west wall, edge (10, 16, 1) = %d; front door tile: %s" % [world.walls.get(Vector3i(10, 16, 1), 0), world.door_tile])
+	tool = "window"
+	_click_build(_at(12.5, 19.05))
+	print("ROOM south door made a window, edge (12, 19, 0) = %d; front door tile: %s" % [world.walls.get(Vector3i(12, 19, 0), 0), world.door_tile])
+	tool = "erase"
+	_click_build(_at(10, 16))
+	_release(_at(10, 17))
+	print("ROOM west door erased, edge (10, 16, 1) = %d; front door tile: %s" % [world.walls.get(Vector3i(10, 16, 1), 0), world.door_tile])
+	set_mode("live")
 
 
 func _paint(mpos: Vector2) -> void:

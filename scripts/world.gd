@@ -842,6 +842,57 @@ func arrival_tiles() -> Array:
 	return out
 
 
+## Moves the front door after building: door_tile becomes the outdoor tile in front of the
+## outside door nearest the street, or the kerb entry (exit_tile) when there is none.
+## An outside door has an enclosed room on one side (a region that does not reach the edge
+## of the lot) and, on the other, the outdoors that the kerb entry is in, reachable on foot
+## from it. A door in a free-standing wall has outdoors on both sides and does not count.
+## A generated house has exactly one such door, the one the generator made, so this leaves
+## it where it is. exit_tile, the kerb entry, never moves. Draws nothing from rng.
+func update_front_door() -> void:
+	ensure_nav()
+	var street := room_of[idx(exit_tile)]
+	var open := {}  # regions that reach the edge of the lot: open land, not rooms
+	for x in W:
+		open[room_of[idx(Vector2i(x, 0))]] = true
+		open[room_of[idx(Vector2i(x, H - 1))]] = true
+	for y in H:
+		open[room_of[idx(Vector2i(0, y))]] = true
+		open[room_of[idx(Vector2i(W - 1, y))]] = true
+	var best := exit_tile
+	var found := false
+	for k in walls:
+		if walls[k] != 2:
+			continue
+		var b := Vector2i(k.x, k.y)
+		var a := b + (Vector2i(0, -1) if k.z == 0 else Vector2i(-1, 0))
+		if not inb(a) or not inb(b):
+			continue
+		for side in [[a, b], [b, a]]:
+			var inside: Vector2i = side[0]
+			var o: Vector2i = side[1]
+			if room_of[idx(o)] != street or open.has(room_of[idx(inside)]):
+				continue
+			if o != exit_tile and path(exit_tile, o) == null:
+				continue
+			if not found or _nearer_street(o, best):
+				best = o
+				found = true
+	door_tile = best
+
+
+## True if outdoor tile a is nearer the street than b: further south, then nearer the kerb
+## entry across, then further west, so the choice never depends on the order of `walls`.
+func _nearer_street(a: Vector2i, b: Vector2i) -> bool:
+	if a.y != b.y:
+		return a.y > b.y
+	var da := absi(a.x - exit_tile.x)
+	var db := absi(b.x - exit_tile.x)
+	if da != db:
+		return da < db
+	return a.x < b.x
+
+
 # ---------------------------------------------------------------- persistence
 
 func save_state() -> Dictionary:
