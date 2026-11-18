@@ -68,7 +68,7 @@ func _build() -> void:
 			var g: Vector3 = h.get_child(0).global_position
 			var bd: float = (h.get_child(0) as MeshInstance3D).mesh.size.z
 			print("lot %d side %s: house front to road edge %.1f, back to far edge %.1f" % [id, "S" if g.z > 0 else "N", absf(g.z) - ROAD / 2.0 - WALK - bd / 2.0, World.H - (absf(g.z) - ROAD / 2.0 - WALK) - bd / 2.0])
-		print("town view: %d plates for %d lots, %d houses for %d home and vacant lots" % [plates.size(), town.lots.size(), houses.size(), town.lots.filter(func(l): return l["kind"] != "empty").size()])
+		print("town view: %d plates for %d lots, %d houses drawn, %d homes without a house" % [plates.size(), town.lots.size(), houses.size(), town.lots.filter(func(l): return l["kind"] == "home" and not houses.has(l["id"])).size()])
 
 
 ## Draws the town again, so it matches the record and the worlds, and opens the player's
@@ -253,12 +253,15 @@ func _plate(l: Dictionary) -> void:
 	_label(l, n)
 
 
-## The footprint and wall colour of the house on a lot, or {} for bare land. A home reads
+## The footprint and wall colour of the house on a lot, or {} for bare land or a home
+## with no house. A home reads
 ## its household's own world. A vacant house is built again from its seed in a throwaway
 ## headless World, which has its own rng and is freed at once, so nothing else moves.
 func _look(l: Dictionary) -> Dictionary:
 	if l["kind"] == "home":
 		var w: World = game.households[l["household"]].world
+		if not w.house.has_area():
+			return {}  # a household on bare land: the plate stays lawn
 		return {"house": w.house, "color": w.wall_color}
 	if l["kind"] == "vacant":
 		var w := World.new()
