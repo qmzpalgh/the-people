@@ -161,7 +161,7 @@ func _ready() -> void:
 		sfx.set_muted(true)
 		if data == null:
 			for p in people:
-				if p.pid != 0:
+				if p.pid != 0 and p.stage() == "adult":
 					assign_job(p)
 			if people.size() >= 2:
 				add_rel(people[0], people[1], 80.0)
