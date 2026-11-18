@@ -128,6 +128,7 @@ func _ready() -> void:
 		if OS.has_environment("TP_RENT"):  # rent the home rather than own it
 			home.tenure = "rent"
 			home.rent = int(world.value() * Defs.RENT_SHARE)
+			world.mark_landlords()  # what came with the home is not theirs to sell
 			(func(): msg("Paid a deposit of $%d." % _deposit_paid())).call_deferred()  # once the HUD is up
 	if OS.has_environment("TP_TEST") and (lot_kind != "" or OS.has_environment("TP_MONEY")):
 		(func(): print("START funds $%d, lot price $%d, deposit $%d, starting money $%d (START_FUNDS $%d)" % [money + _lot_paid() + _deposit_paid(), _lot_paid(), _deposit_paid(), money, Defs.START_FUNDS])).call_deferred()
@@ -140,6 +141,8 @@ func _ready() -> void:
 		get_tree().process_frame.connect(_session_log)
 	if lot_kind == "empty" and OS.has_environment("TP_ROOM"):
 		_room_test.call_deferred()  # once the camera and HUD it clicks through exist
+	if home.tenure == "rent" and OS.has_environment("TP_LIMITS"):
+		_limits_test.call_deferred()  # after the START line, so that shows the money before it
 	# The town draws from its own rng, seeded from the game's, so no other draw moves.
 	town = Town.new(hash("town %d" % seed_v))
 	town.add_home(0, seed_v)
@@ -739,6 +742,9 @@ func _show_node(n: Node, on: bool) -> void:
 
 
 func set_mode(m: String) -> void:
+	if m == "build" and _renting():
+		msg(Defs.RENT_NO_BUILD, "error")
+		return
 	mode = m
 	set_buy("")
 	tool = ""
@@ -1040,6 +1046,9 @@ func _placeable(a: Vector2i) -> bool:
 func _click_buy(mpos: Vector2) -> void:
 	if sell:
 		var o = pick_object(mpos)
+		if o != null and _renting() and world.landlords(o):
+			msg("That came with the home, so it isn't yours to sell.", "error")
+			return
 		if o != null and o.kind != "puddle":
 			var v := int(o.def["price"] * 0.7)
 			remove_object(o)
@@ -1079,6 +1088,9 @@ func _nearest_edge(mpos: Vector2) -> Vector3i:
 
 
 func _click_build(mpos: Vector2) -> void:
+	if _renting() and tool != "":
+		msg(Defs.RENT_NO_BUILD, "error")
+		return
 	match tool:
 		"wall", "erase":
 			drag_start = _corner(mpos)
@@ -1099,6 +1111,9 @@ func _click_build(mpos: Vector2) -> void:
 
 func _release(mpos: Vector2) -> void:
 	if mode != "build" or drag_start == null:
+		return
+	if _renting():
+		drag_start = null
 		return
 	var a: Vector2i = drag_start
 	var b := _corner(mpos)
@@ -1184,7 +1199,10 @@ func _move_into_vacant(s: int) -> void:
 	w.setup(s)
 	print("HOME player's: " + _home_line(world))
 	print("HOME from seed: " + _home_line(w))
-	print("HOME identical: %s" % (JSON.stringify(world.save_state()) == JSON.stringify(w.save_state())))
+	var mine := world.save_state()
+	for od in mine["objects"]:
+		od.erase("ll")  # a rental marks the landlord's furniture; the house itself is the same
+	print("HOME identical: %s" % (JSON.stringify(mine) == JSON.stringify(w.save_state())))
 	w.free()
 
 
@@ -1215,6 +1233,61 @@ func _gets_start_funds() -> bool:
 ## it is always one period of the saved rent, and nothing after the start reads it.
 func _deposit_paid() -> int:
 	return home.rent if lot_kind.begins_with("vacant:") and home.tenure == "rent" else 0
+
+
+## Renters can furnish but not rebuild: no Build mode, no wall, door, window or floor edits,
+## and no selling what came with the home.
+func _renting() -> bool:
+	return home != null and home.tenure == "rent"
+
+
+## TP_LIMITS (on a TP_LOT=vacant rental): tries what a renter may not do, and what they may,
+## through the functions the player's clicks use, printing each result and the money.
+func _limits_test() -> void:
+	var m0 := money
+	set_mode("build")
+	print("LIMITS enter Build: %s, mode %s, money $%d -> $%d" % ["allowed" if mode == "build" else "refused", mode, m0, money])
+	mode = "build"  # as if a script got past set_mode: the clicks must refuse on their own
+	m0 = money
+	var had := world.walls.has(Vector3i(3, 2, 0))
+	tool = "wall"
+	_click_build(_at(2, 2))
+	_release(_at(6, 2))
+	var walled := world.walls.has(Vector3i(3, 2, 0)) and not had
+	print("LIMITS wall on the lawn: %s, money $%d -> $%d" % ["allowed" if walled else "refused", m0, money])
+	m0 = money
+	var f0 := world.floors[world.idx(Vector2i(3, 3))]
+	tool = "floor:1"
+	_click_build(_at(3.5, 3.5))
+	var floored := world.floors[world.idx(Vector2i(3, 3))] != f0
+	print("LIMITS floor tile: %s, money $%d -> $%d" % ["allowed" if floored else "refused", m0, money])
+	tool = ""
+	mode = "live"
+	set_mode("buy")
+	var o = world.nearest_object("fridge", Vector2i.ZERO)
+	sell = true
+	var mp := cam.cam.unproject_position(o.position + Vector3(0, 0.5, 0))
+	var aimed: bool = pick_object(mp) == o
+	m0 = money
+	_click_buy(mp)
+	print("LIMITS sell the landlord's %s (click lands on it: %s): %s, money $%d -> $%d" % [o.def["name"], aimed, "allowed" if not o.alive else "refused", m0, money])
+	set_buy("plant")
+	var t = world.free_tile_near(Vector2i(3, 3))
+	m0 = money
+	_click_buy(_at(t.x + 0.5, t.y + 0.5))
+	var p = world.object_at(t)
+	var m1 := money
+	set_buy("")
+	sell = true
+	var bought: bool = p != null and p.kind == "plant" and not world.landlords(p)
+	var sold := false
+	if bought:
+		mp = cam.cam.unproject_position(p.position + Vector3(0, 0.3, 0))
+		aimed = pick_object(mp) == p
+		_click_buy(mp)
+		sold = not p.alive
+	print("LIMITS buy a plant ($%d) then sell it (click lands on it: %s): bought %s, money $%d -> $%d; sold %s, money -> $%d" % [Defs.OBJECTS["plant"]["price"], aimed, bought, m0, m1, sold, money])
+	set_mode("live")
 
 
 ## TP_PRICES (or any TP_LOT) under TP_TEST: one line with the funds, the lot price and the

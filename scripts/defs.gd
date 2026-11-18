@@ -272,3 +272,5 @@ const LOT_PRICE := 2000
 ## The share of a home's value (World.value() at move-in) that a renter pays each three-day
 ## bill period.
 const RENT_SHARE := 0.01
+## Why a renter cannot use Build: the refusal message and the greyed Build button's tooltip.
+const RENT_NO_BUILD := "You rent this home, so you can't change its walls or floors."

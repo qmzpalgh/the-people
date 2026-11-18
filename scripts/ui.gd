@@ -724,6 +724,12 @@ func refresh() -> void:
 		speed_btns[i].set_pressed_no_signal(game.speed == i)
 	for m in mode_btns:
 		mode_btns[m].set_pressed_no_signal(game.mode == m)
+	var bb: Button = mode_btns["build"]
+	var renting: bool = game.home.tenure == "rent"
+	if bb.disabled != renting:  # renters cannot rebuild: Build is greyed, and says why
+		bb.disabled = renting
+		bb.tooltip_text = Defs.RENT_NO_BUILD if renting else ""
+		bb.add_theme_color_override("font_disabled_color", Color(MUTED, 0.45))
 	if side.visible:
 		for k in item_btns:
 			item_btns[k].set_pressed_no_signal(game.buy_kind == k)

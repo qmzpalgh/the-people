@@ -910,6 +910,8 @@ func save_state() -> Dictionary:
 	var objs := []
 	for o in objects:
 		objs.append({"k": o.kind, "x": o.tile.x, "y": o.tile.y, "r": o.rot, "s": o.oseed, "label": o.label})
+		if landlords(o):
+			objs.back()["ll"] = true
 	var rms := []
 	for rm in rooms:
 		var r: Rect2i = rm["rect"]
@@ -944,7 +946,21 @@ func load_state(d: Dictionary) -> void:
 		if Defs.OBJECTS.has(o["k"]):
 			var obj := add_object(o["k"], int(o["x"]), int(o["y"]), int(o["r"]), int(o["s"]))
 			obj.label = o.get("label", "")
+			if o.get("ll", false):
+				obj.set_meta("landlord", true)
 	rng.state = int(d.get("rng", "1"))
+
+
+## Marks everything now on the lot as the landlord's: what came with a rented home. Kept as
+## node metadata on each object and saved as the optional object key "ll".
+func mark_landlords() -> void:
+	for o in objects:
+		o.set_meta("landlord", true)
+
+
+## True if the object came with a rented home (mark_landlords), not bought by the household.
+func landlords(o: SimObject) -> bool:
+	return o.get_meta("landlord", false)
 
 
 ## What the lot as it stands would cost to build at build and buy prices.
