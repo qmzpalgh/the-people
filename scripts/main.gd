@@ -46,6 +46,10 @@ var age_rate := 1.0
 ## The lot a new game started on, from TP_LOT: "" for a generated home, "empty" for bare
 ## land, which counts as bought on moving in (start_household takes LOT_PRICE).
 var lot_kind := ""
+## True from the start of a build session until the game is first unpaused; the Build panel
+## shows the bare-lot hint meanwhile (UI._hint).
+var session_hint := false
+var _log_frames := 0  # frames seen by _session_log (TP_PAUSELOG)
 
 var buy_kind := ""
 var buy_rot := 0
@@ -121,6 +125,11 @@ func _ready() -> void:
 		(func(): print("START funds $%d, lot price $%d, starting money $%d (START_FUNDS $%d)" % [money + _lot_paid(), _lot_paid(), money, Defs.START_FUNDS])).call_deferred()
 	if OS.has_environment("TP_TEST") and (lot_kind != "" or OS.has_environment("TP_PRICES")):
 		_print_prices.call_deferred()
+	# TP_SESSION applies the build session on any start, a loaded one included, for tests.
+	if lot_kind == "empty" or OS.has_environment("TP_SESSION"):
+		_start_build_session.call_deferred()  # after _ready, so a test's forced speed loses
+	if OS.has_environment("TP_PAUSELOG"):
+		get_tree().process_frame.connect(_session_log)
 	if lot_kind == "empty" and OS.has_environment("TP_ROOM"):
 		_room_test.call_deferred()  # once the camera and HUD it clicks through exist
 	# The town draws from its own rng, seeded from the game's, so no other draw moves.
@@ -771,7 +780,7 @@ func save_game(quiet := false) -> void:
 	var hhs := []
 	for id in households:  # the player's household (id 0) was added first
 		var hh: Household = households[id]
-		hhs.append({"id": hh.id, "family": hh.family, "money": hh.money, "world": hh.world.save_state()})
+		hhs.append({"id": hh.id, "family": hh.family, "money": hh.money, "build_hint": hh.build_hint, "world": hh.world.save_state()})
 	var d := {
 		"v": 2, "seed": seed_base, "minutes": minutes, "rel": rel,
 		"next_pid": next_pid, "next_hh": next_hh, "welcomed": welcomed, "pending": pending, "free_will": free_will,
@@ -806,6 +815,7 @@ func _load_household(d: Dictionary) -> void:
 		var hh: Household = home if int(hd["id"]) == 0 else _add_household(int(hd["id"]), hd["world"])
 		hh.family = hd["family"]
 		hh.money = int(hd["money"])
+		hh.build_hint = bool(hd.get("build_hint", false))
 	family = home.family
 	for pc in d.get("pending", []):
 		pending.append({"at": float(pc["at"]), "hh": int(pc["hh"]), "a": int(pc["a"]), "b": int(pc["b"])})
@@ -1101,6 +1111,37 @@ func _walls_changed() -> void:
 	world.nav_dirty = true
 	world.update_room_scores()
 	world.update_front_door()
+
+
+## The build session a household arriving on an empty lot starts in: Build mode, paused,
+## with Space resuming at speed 1. The first time for this household, the Build panel shows
+## the bare-lot hint until the game is unpaused. Safe to call again (say, when the lot is
+## first shown after another screen restored a speed): it only re-pauses and re-opens Build.
+func _start_build_session() -> void:
+	set_mode("build")
+	set_speed(0)
+	prev_speed = 1
+	if not home.build_hint:
+		home.build_hint = true
+		session_hint = true
+
+
+## TP_PAUSELOG: prints the clock, speed and the selected person's needs at frames 2, 100 and
+## 190. With TP_UNPAUSE=<frame>, presses Space (through the real key handler) at that frame.
+func _session_log() -> void:
+	_log_frames += 1
+	var f := _log_frames
+	if f in [2, 100, 190] and selected != null:
+		var nd := []
+		for n in Defs.NEEDS:
+			nd.append("%s %.3f" % [n.substr(0, 3), selected.needs[n]])
+		print("PAUSELOG frame %d: minutes %.3f, speed %d, mode %s, hint %s | %s: %s" % [f, minutes, speed, mode, session_hint, selected.first(), ", ".join(nd)])
+	if OS.has_environment("TP_UNPAUSE") and f == int(OS.get_environment("TP_UNPAUSE")):
+		var e := InputEventKey.new()
+		e.keycode = KEY_SPACE
+		e.pressed = true
+		_unhandled_input(e)
+		print("PAUSELOG frame %d: pressed Space, speed now %d" % [f, speed])
 
 
 ## True when the player's lot came with no house, so the household has to house itself.

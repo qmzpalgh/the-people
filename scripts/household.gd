@@ -8,3 +8,6 @@ var family := ""
 var world: World
 var money := 2500
 var player := false
+## True once this household has been shown the build-session hint for a bare lot, so it is
+## shown only once. Saved as the optional key "build_hint".
+var build_hint := false
