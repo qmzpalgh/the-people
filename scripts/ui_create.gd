@@ -30,6 +30,8 @@ var done_b: Button
 var remove_b: Button
 var chips_box: HBoxContainer
 var stage_btns: Array = []
+var skin_btns: Array = []
+var hair_btns: Array = []
 var _frames := 0
 var _after_done := false
 
@@ -92,6 +94,8 @@ func setup(g) -> Array:
 	for st in STAGES:
 		var b := ui._seg(srow, st.capitalize(), set_stage.bind(st))
 		stage_btns.append(b)
+	skin_btns = _swatches(box, "Skin", Defs.SKIN_TONES, set_skin)
+	hair_btns = _swatches(box, "Hair colour", Defs.HAIR_COLOURS, set_hair)
 	why_l = ui._label(box, "", 12)
 	why_l.add_theme_color_override("font_color", UI.MUTED)
 	why_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -118,15 +122,25 @@ func setup(g) -> Array:
 		fam_e.text = parts[0]
 		members[0]["name"] = parts[1] if parts.size() > 1 else ""
 	_select(int(OS.get_environment("TP_CREATE_SEL")) if OS.has_environment("TP_CREATE_SEL") else 0)
+	if OS.has_environment("TP_CREATE_LOOK"):  # "skin=2,hair=4": clicks those swatches on the selected member
+		for kv in OS.get_environment("TP_CREATE_LOOK").split(","):
+			var p := kv.split("=")
+			if p[0] == "skin":
+				set_skin(int(p[1]))
+			elif p[0] == "hair":
+				set_hair(int(p[1]))
 	if OS.has_environment("TP_CREATE_REFUSE"):  # the refusals, scripted: remove and re-stage the only adult
 		remove_selected()
 		set_stage("child")
 	if _after_done:
-		if OS.has_environment("TP_CREATE_NAMES"):
-			game.save_game()
+		if OS.has_environment("TP_SAVE"):
+			game.save_game()  # so a second launch can load what was made
 		for p in game.people:
 			print("CREATE game: ", describe(p.pname, p.age, p.traits, p.look))
-	elif OS.has_environment("TP_CREATE_DONE") and OS.has_environment("TP_TEST"):
+	elif OS.has_environment("TP_CREATE_PRINT"):  # a launch that loaded a save: show who is in it
+		for p in game.people:
+			print("CREATE loaded: ", describe(p.pname, p.age, p.traits, p.look))
+	if not _after_done and OS.has_environment("TP_CREATE_DONE") and OS.has_environment("TP_TEST"):
 		finish.call_deferred()  # a headless test run has no frames to wait for
 	return [self, stand, cam]
 
@@ -222,6 +236,44 @@ func _rebuild_chips() -> void:
 		add.add_theme_color_override("font_color", UI.INK)
 
 
+## A row of round colour swatches under a small label. Clicking one calls `pick(index)`.
+func _swatches(box: Node, label: String, colours: Array, pick: Callable) -> Array:
+	var ui: UI = game.ui
+	var l := ui._label(box, label, 12)
+	l.add_theme_color_override("font_color", UI.MUTED)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	box.add_child(row)
+	var out := []
+	for i in colours.size():
+		var b := ui._btn(row, "", pick.bind(i))
+		b.custom_minimum_size = Vector2(26, 26)
+		b.tooltip_text = "%s %d" % [label, i + 1]
+		out.append(b)
+	return out
+
+
+func _style_swatches(btns: Array, colours: Array, current: Color) -> void:
+	var ui: UI = game.ui
+	for i in btns.size():
+		var sb: StyleBoxFlat = ui._sb(colours[i], 13, 0, 0)
+		if colours[i].is_equal_approx(current):
+			sb.set_border_width_all(3)
+			sb.border_color = UI.GOLD
+		for st in ["normal", "hover", "pressed", "focus"]:
+			btns[i].add_theme_stylebox_override(st, sb)
+
+
+func set_skin(i: int) -> void:
+	members[sel]["look"]["skin"] = Defs.SKIN_TONES[i]
+	_select(sel)
+
+
+func set_hair(i: int) -> void:
+	members[sel]["look"]["hair"] = Defs.HAIR_COLOURS[i]
+	_select(sel)
+
+
 ## Shows member `i`: their fields, stage and model.
 func _select(i: int) -> void:
 	sel = clampi(i, 0, members.size() - 1)
@@ -249,6 +301,8 @@ func _refresh() -> void:
 	for i in STAGES.size():
 		stage_btns[i].set_pressed_no_signal(STAGES[i] == stage_of(m["age"]))
 	remove_b.disabled = members.size() <= 1
+	_style_swatches(skin_btns, Defs.SKIN_TONES, m["look"]["skin"])
+	_style_swatches(hair_btns, Defs.HAIR_COLOURS, m["look"]["hair"])
 	_rebuild_chips()
 	var why := _problem()
 	done_b.disabled = why != ""
