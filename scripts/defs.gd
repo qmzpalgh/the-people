@@ -258,3 +258,9 @@ static func first_name(rng: RandomNumberGenerator) -> String:
 
 static func surname(rng: RandomNumberGenerator) -> String:
 	return _SUR_A[rng.randi() % _SUR_A.size()] + _SUR_B[rng.randi() % _SUR_B.size()]
+
+
+## What a household that has to house itself (one starting on an empty lot) starts with.
+## Provisional: L4 sets the real figure from the home values (World.value()). A household
+## that moves into a generated home keeps Household's $2,500.
+const START_FUNDS := 15000

@@ -114,6 +114,8 @@ func _ready() -> void:
 	# keeps the lot it was made on.
 	var lot_kind := OS.get_environment("TP_LOT") if data == null else ""
 	world.setup(seed_v, data["households"][0]["world"] if data != null else null, lot_kind == "empty")
+	if OS.has_environment("TP_TEST") and (lot_kind != "" or OS.has_environment("TP_MONEY")):
+		(func(): print("START money $%d (START_FUNDS $%d)" % [money, Defs.START_FUNDS])).call_deferred()
 	if lot_kind == "empty" and OS.has_environment("TP_ROOM"):
 		_room_test.call_deferred()  # once the camera and HUD it clicks through exist
 	# The town draws from its own rng, seeded from the game's, so no other draw moves.
@@ -204,8 +206,14 @@ func _make_person(id: int, sv: int, fam: String, hh: Household, spec := {}) -> P
 
 ## A random household for a new game: {family, money, members: [{name, age, look, traits}]}.
 ## `name` is a first name; `look` and `traits` have the shapes a Person keeps in memory.
+## `money` is optional and wins when present. It is left out on a lot with no house, so that
+## start_household gives the household START_FUNDS. TP_MONEY sets it, for tests.
 func random_spec() -> Dictionary:
 	var spec := {"family": Defs.surname(rng), "money": Household.new().money, "members": []}
+	if _houses_itself():
+		spec.erase("money")
+	if OS.has_environment("TP_MONEY"):
+		spec["money"] = int(OS.get_environment("TP_MONEY"))
 	for i in rng.randi_range(2, 3):
 		var r := Person.roll(_rng_for(_member_seed(i)))
 		spec["members"].append({"name": r["name"], "age": r["age"], "look": r["look"], "traits": r["traits"]})
@@ -228,7 +236,7 @@ func _rng_for(sv: int) -> RandomNumberGenerator:
 func start_household(spec: Dictionary) -> void:
 	family = spec["family"]
 	home.family = family
-	home.money = int(spec["money"])
+	home.money = int(spec["money"]) if spec.has("money") else (Defs.START_FUNDS if _houses_itself() else Household.new().money)
 	var spots := world.arrival_tiles()
 	for i in spec["members"].size():
 		var p := _make_person(i, _member_seed(i), family, home, spec["members"][i])
@@ -1087,6 +1095,11 @@ func _walls_changed() -> void:
 	world.nav_dirty = true
 	world.update_room_scores()
 	world.update_front_door()
+
+
+## True when the player's lot came with no house, so the household has to house itself.
+func _houses_itself() -> bool:
+	return world != null and not world.house.has_area()
 
 
 ## Where a point on the ground shows on screen, for scripted clicks.
