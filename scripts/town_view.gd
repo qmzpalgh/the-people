@@ -85,7 +85,10 @@ func refresh() -> void:
 	hover = -1
 	picked = -1
 	_build()
-	open_home()
+	if hud.asking():
+		_recolour()  # no household yet: nothing framed, no card, no gold label
+	else:
+		open_home()
 
 
 ## The first launch, with no save: no lot is framed and no card is open, only the prompt.

@@ -1204,6 +1204,7 @@ func _start_build_session() -> void:
 	set_mode("build")
 	set_speed(0)
 	prev_speed = 1
+	speed_before_town = 0  # a session begun while the town shows stays paused after Play
 	if not home.build_hint:
 		home.build_hint = true
 		session_hint = true
@@ -1247,6 +1248,7 @@ func _move_into_vacant(s: int) -> void:
 	else:
 		first["seed"] = s
 		print("TOWN seed %d is not a vacant lot in this town; lot %d keeps household 0, now with seed %d" % [s, first["id"], s])
+	town_view.refresh()  # the town was drawn before the move
 	var w := World.new()
 	w.headless = true
 	w.setup(s)
