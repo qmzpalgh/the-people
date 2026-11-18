@@ -37,6 +37,11 @@ func _ready() -> void:
 	add_child(cam)
 	cam.position = Vector3(mid, 0, 0)
 	if OS.has_environment("TP_SHOT"):
+		for id in houses:
+			var h: Node3D = houses[id]
+			var g: Vector3 = h.get_child(0).global_position
+			var bd: float = (h.get_child(0) as MeshInstance3D).mesh.size.z
+			print("lot %d side %s: house front to road edge %.1f, back to far edge %.1f" % [id, "S" if g.z > 0 else "N", absf(g.z) - ROAD / 2.0 - WALK - bd / 2.0, World.H - (absf(g.z) - ROAD / 2.0 - WALK) - bd / 2.0])
 		print("town view: %d plates for %d lots, %d houses for %d home and vacant lots" % [plates.size(), town.lots.size(), houses.size(), town.lots.filter(func(l): return l["kind"] != "empty").size()])
 
 
