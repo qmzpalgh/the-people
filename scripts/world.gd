@@ -25,6 +25,9 @@ var walls_up := false
 var headless := false
 var night := false
 var door_tile := Vector2i.ZERO
+## The tile just inside the front door, where a new child appears and a visitor at the door
+## looks. At the kerb entry, the lawn tile behind it.
+var door_inside := Vector2i.ZERO
 var exit_tile := Vector2i.ZERO
 var house := Rect2i()
 var rooms: Array = []  # [{rect: Rect2i, type: String}]
@@ -638,6 +641,7 @@ func _gen_house() -> void:
 	var fx := rng.randi_range(fr.position.x + 1, fr.end.x - 2) if fr.size.x >= 3 else fr.position.x
 	_make_door(Vector3i(fx, south, 0), keep)
 	door_tile = Vector2i(fx, south)
+	door_inside = door_tile + Vector2i(0, -1)
 	exit_tile = Vector2i(fx, H - 1)
 	for y in range(south, H):
 		floors[y * W + fx] = 4
@@ -659,6 +663,7 @@ func _gen_empty() -> void:
 	_clear()
 	house = Rect2i()
 	door_tile = Vector2i(W / 2, H - 1)
+	door_inside = door_tile + Vector2i(0, -1)
 	exit_tile = door_tile
 	floors[idx(door_tile)] = 4
 
@@ -860,6 +865,7 @@ func update_front_door() -> void:
 		open[room_of[idx(Vector2i(0, y))]] = true
 		open[room_of[idx(Vector2i(W - 1, y))]] = true
 	var best := exit_tile
+	var best_in := exit_tile + Vector2i(0, -1)  # the kerb entry's lawn tile, as on an empty lot
 	var found := false
 	for k in walls:
 		if walls[k] != 2:
@@ -877,8 +883,10 @@ func update_front_door() -> void:
 				continue
 			if not found or _nearer_street(o, best):
 				best = o
+				best_in = inside
 				found = true
 	door_tile = best
+	door_inside = best_in
 
 
 ## True if outdoor tile a is nearer the street than b: further south, then nearer the kerb
@@ -908,7 +916,7 @@ func save_state() -> Dictionary:
 		rms.append({"rect": [r.position.x, r.position.y, r.size.x, r.size.y], "type": rm["type"]})
 	return {
 		"house": [house.position.x, house.position.y, house.size.x, house.size.y],
-		"rooms": rms, "door": [door_tile.x, door_tile.y], "exit": [exit_tile.x, exit_tile.y],
+		"rooms": rms, "door": [door_tile.x, door_tile.y], "door_in": [door_inside.x, door_inside.y], "exit": [exit_tile.x, exit_tile.y],
 		"wall_color": wall_color.to_html(), "floors": Array(floors), "walls": w, "objects": objs,
 		"rng": str(rng.state),
 	}
@@ -922,6 +930,9 @@ func load_state(d: Dictionary) -> void:
 		var r: Array = rm["rect"]
 		rooms.append({"rect": Rect2i(int(r[0]), int(r[1]), int(r[2]), int(r[3])), "type": rm["type"]})
 	door_tile = Vector2i(int(d["door"][0]), int(d["door"][1]))
+	# Saves from before door_in always had their front door in a south wall.
+	var di: Array = d.get("door_in", [door_tile.x, door_tile.y - 1])
+	door_inside = Vector2i(int(di[0]), int(di[1]))
 	exit_tile = Vector2i(int(d["exit"][0]), int(d["exit"][1]))
 	wall_color = Color.html(d["wall_color"])
 	var fl: Array = d["floors"]

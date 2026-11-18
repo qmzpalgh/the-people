@@ -570,7 +570,7 @@ func _spawn_child(pc: Dictionary) -> void:
 	var pa = _by_pid(int(pc["a"]))
 	var pb = _by_pid(int(pc["b"]))
 	var c := _make_child(pa, pb, hh)
-	var inside: Vector2i = hh.world.door_tile + Vector2i(0, -1)
+	var inside: Vector2i = hh.world.door_inside
 	c.tile = inside if hh.world.walkable(inside) else hh.world.exit_tile
 	c.position = hh.world.tile_center(c.tile)
 	if hh.player:
@@ -1097,7 +1097,8 @@ func _at(x: float, y: float) -> Vector2:
 ## TP_ROOM (with TP_LOT=empty): builds a 5 x 5 room with a door in its south wall through the
 ## player's own build clicks, then brings a neighbour over, printing where the front door is
 ## and where the visitor stops. Then checks the fallbacks: a second door on the west wall,
-## the south door made a window, and the west door erased.
+## the south door made a window (a second visitor, and a new child, at the west door), and
+## the west door erased.
 func _room_test() -> void:
 	set_mode("build")
 	tool = "wall"
@@ -1109,7 +1110,29 @@ func _room_test() -> void:
 	_click_build(_at(12.5, 19.05))
 	set_mode("live")
 	print("ROOM built: %d wall edges, door edge (12, 19, 0) = %d, money $%d" % [world.walls.size(), world.walls.get(Vector3i(12, 19, 0), 0), money])
-	print("ROOM front door tile: %s (kerb entry %s)" % [world.door_tile, world.exit_tile])
+	print("ROOM front door tile: %s, inside %s (kerb entry %s)" % [world.door_tile, world.door_inside, world.exit_tile])
+	_room_visit()
+	set_mode("build")
+	tool = "door"
+	_click_build(_at(10.05, 16.5))
+	print("ROOM second door on the west wall, edge (10, 16, 1) = %d; front door tile: %s" % [world.walls.get(Vector3i(10, 16, 1), 0), world.door_tile])
+	tool = "window"
+	_click_build(_at(12.5, 19.05))
+	print("ROOM south door made a window, edge (12, 19, 0) = %d; front door tile: %s, inside %s" % [world.walls.get(Vector3i(12, 19, 0), 0), world.door_tile, world.door_inside])
+	_room_visit()
+	if not people.is_empty():
+		_spawn_child({"hh": 0, "a": people[0].pid, "b": -1})
+		print("ROOM new child %s appeared at %s (front door %s, inside %s)" % [people.back().first(), people.back().tile, world.door_tile, world.door_inside])
+	tool = "erase"
+	_click_build(_at(10, 16))
+	_release(_at(10, 17))
+	print("ROOM west door erased, edge (10, 16, 1) = %d; front door tile: %s, inside %s" % [world.walls.get(Vector3i(10, 16, 1), 0), world.door_tile, world.door_inside])
+	set_mode("live")
+
+
+## For TP_ROOM: sends a neighbour over and runs the clock until they wait at the door, then
+## prints where they stand and which tile they face.
+func _room_visit() -> void:
 	var v = null
 	for i in 1440:
 		if v == null:
@@ -1123,21 +1146,14 @@ func _room_test() -> void:
 		if _probe != null and _test_days > 0:
 			_probe.step(1.0 / 60.0)
 	if v != null and is_instance_valid(v) and v.vstate == "waiting":
-		print("ROOM visitor %s arrived at %s at %05.2f (front door %s)" % [v.pname, v.tile, hour(), world.door_tile])
+		print("ROOM visitor %s arrived at %s at %05.2f (front door %s), facing %s" % [v.pname, v.tile, hour(), world.door_tile, _facing(v)])
 	else:
 		print("ROOM visitor did not arrive")
-	set_mode("build")
-	tool = "door"
-	_click_build(_at(10.05, 16.5))
-	print("ROOM second door on the west wall, edge (10, 16, 1) = %d; front door tile: %s" % [world.walls.get(Vector3i(10, 16, 1), 0), world.door_tile])
-	tool = "window"
-	_click_build(_at(12.5, 19.05))
-	print("ROOM south door made a window, edge (12, 19, 0) = %d; front door tile: %s" % [world.walls.get(Vector3i(12, 19, 0), 0), world.door_tile])
-	tool = "erase"
-	_click_build(_at(10, 16))
-	_release(_at(10, 17))
-	print("ROOM west door erased, edge (10, 16, 1) = %d; front door tile: %s" % [world.walls.get(Vector3i(10, 16, 1), 0), world.door_tile])
-	set_mode("live")
+
+
+## The tile next to a person in the direction they face.
+func _facing(p: Person) -> Vector2i:
+	return p.tile + Vector2i(roundi(sin(p.rotation.y)), roundi(cos(p.rotation.y)))
 
 
 func _paint(mpos: Vector2) -> void:
