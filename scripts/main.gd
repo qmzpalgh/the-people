@@ -180,6 +180,10 @@ func _ready() -> void:
 			ui.debug_open(OS.get_environment("TP_UI"))
 	if OS.has_environment("TP_SCREEN"):
 		set_screen(OS.get_environment("TP_SCREEN"))
+	elif not testing or OS.has_environment("TP_BOOT"):
+		# A normal launch opens on the town. TP_BOOT lets a test run do the same.
+		town_view.open_home()
+		set_screen("town")
 
 
 func _make_person(id: int, sv: int, fam: String, hh: Household, spec := {}) -> Person:

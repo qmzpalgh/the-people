@@ -17,6 +17,7 @@ var hover := -1           # id of the lot under the mouse, or -1
 var picked := -1          # id of the lot whose card is open, or -1
 var _hover_n: MeshInstance3D
 var _pick_n: MeshInstance3D
+var _home_n: Node3D       # a gold frame round the player's own lot
 var _frame := 0
 var labels := {}          # lot id -> its floating label
 var houses := {}          # lot id -> the house's node, for home and vacant lots
@@ -36,6 +37,7 @@ func _ready() -> void:
 	add_child(hud)
 	_hover_n = _marker(Color(UI.GOLD, 0.15))
 	_pick_n = _marker(Color(1, 1, 1, 0.3))
+	_home_n = _ring(UI.GOLD)
 	for l in town.lots:
 		_plate(l)
 	cam = Cam.new()
@@ -70,6 +72,32 @@ func _marker(c: Color) -> MeshInstance3D:
 	m.visible = false
 	add_child(m)
 	return m
+
+
+## A thin frame round a lot, in a colour, laid on the player's lot.
+func _ring(c: Color) -> Node3D:
+	var n := Node3D.new()
+	var w := 0.5
+	Meshes.box(n, Vector3(World.W, 0.12, w), Vector3(0, 0.08, -World.H / 2.0 + w / 2.0), c, 0.3)
+	Meshes.box(n, Vector3(World.W, 0.12, w), Vector3(0, 0.08, World.H / 2.0 - w / 2.0), c, 0.3)
+	Meshes.box(n, Vector3(w, 0.12, World.H), Vector3(-World.W / 2.0 + w / 2.0, 0.08, 0), c, 0.3)
+	Meshes.box(n, Vector3(w, 0.12, World.H), Vector3(World.W / 2.0 - w / 2.0, 0.08, 0), c, 0.3)
+	n.visible = false
+	add_child(n)
+	return n
+
+
+## Frames the player's lot and opens its card, as the game does on boot.
+func open_home() -> void:
+	var l = town.lot_of(0)
+	if l == null:
+		return
+	_home_n.position = origin(l) + Vector3(World.W / 2.0, 0, World.H / 2.0)
+	_home_n.visible = true
+	picked = l["id"]
+	_show_marker(_pick_n, picked)
+	hud.show_lot(l)
+	cam.position = Vector3(_home_n.position.x, 0, 0)
 
 
 ## The lot under a screen position, or null. The mouse ray meets the ground, and the point
@@ -111,6 +139,9 @@ func _process(_dt: float) -> void:
 		var id := int(OS.get_environment("TP_TOWN_CLICK"))
 		var a := origin(town.lot(id)) + Vector3(World.W / 2.0, 0, World.H / 2.0)
 		print("town card: ", click(cam.cam.unproject_position(a)))
+	if _frame == 8 and OS.has_environment("TP_TOWN_PLAY"):
+		hud.play_btn.pressed.emit()
+		print("town play: screen ", game.screen, ", speed ", game.speed)
 
 
 func _unhandled_input(e: InputEvent) -> void:
@@ -238,8 +269,6 @@ func label_text(l: Dictionary) -> String:
 func _label(l: Dictionary, plate: Node3D) -> void:
 	var t := Label3D.new()
 	var txt := label_text(l)
-	if l["kind"] == "home" and l["household"] == 0:
-		txt += "\nYour home"
 	t.text = txt
 	t.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	t.fixed_size = true

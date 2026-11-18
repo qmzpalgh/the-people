@@ -7,6 +7,7 @@ var game: Node
 var ui: UI
 var card: PanelContainer
 var body: VBoxContainer
+var play_btn: Button
 var title := ""             # the card's title now, "" when the card is closed
 
 
@@ -33,6 +34,7 @@ func _ready() -> void:
 
 ## Opens the card for a lot, or closes it for null.
 func show_lot(l: Variant) -> void:
+	play_btn = null
 	for c in body.get_children():
 		body.remove_child(c)
 		c.queue_free()
@@ -59,6 +61,12 @@ func show_lot(l: Variant) -> void:
 				var nm := ui._label(row, p.first(), 14)
 				nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 				ui._chip(row, p.stage().capitalize(), UI.MUTED)
+			if l["household"] == 0:
+				play_btn = ui._btn(body, "Play", game.set_screen.bind("lot"))
+				play_btn.add_theme_stylebox_override("normal", ui._sb(UI.INK))
+				play_btn.add_theme_stylebox_override("hover", ui._sb(UI.INK.lightened(0.15)))
+				play_btn.add_theme_color_override("font_color", Color.WHITE)
+				play_btn.add_theme_color_override("font_hover_color", Color.WHITE)
 		"vacant":
 			title = "To let"
 			ui._label(head, title, 17)
