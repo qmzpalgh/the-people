@@ -62,8 +62,12 @@ const TRAIT_HINTS := {
 	"outgoing": "Outgoing people crave company and go looking for a chat, but they also get lonely faster. Shy people are happy alone, and chats with them land less often.",
 	"active": "Active people tire more slowly and are more likely to practise skills. Laid-back people tire sooner and are less drawn to practice.",
 	"playful": "Playful people get bored faster and jump at anything fun. Serious people stay content for longer, and jokes land less often with them.",
-	"nice": "Nice people take compliments and hugs warmly and never start an insult. Grumpy ones (3 or less) may insult people they have fallen out with.",
+	"nice": "Nice people take compliments and hugs warmly and never start an insult. Grumpy ones may insult people they have fallen out with.",
 }
+
+## Where a pair of starting members stands with each other. On the card these read "close" (70 and up),
+## "friend" (35 and up) and "friendly" (10 and up). Partners can have a child together (needs 70).
+const REL_KINDS := {"partners": 80.0, "family": 55.0, "housemates": 20.0}
 
 ## Body size ranges, as Person.roll draws them: look.h scales height, look.wide scales width.
 const HEIGHT_RANGE := Vector2(0.9, 1.08)

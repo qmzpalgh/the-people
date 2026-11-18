@@ -233,7 +233,7 @@ func start_household(spec: Dictionary) -> void:
 	for a in people:
 		for b in people:
 			if a.pid < b.pid:
-				rel[_rk(a, b)] = rng.randf_range(5.0, 45.0)
+				rel[_rk(a, b)] = _spec_rel(spec, a.pid, b.pid, rng.randf_range(5.0, 45.0))
 	next_pid = 100
 	for i in 3:
 		_new_family(rng.randi_range(1, 3), true)
@@ -818,6 +818,15 @@ func _take_spec() -> Dictionary:
 	var s := new_spec
 	new_spec = {}
 	return s
+
+
+## The starting relationship of members `a` and `b` (indexes into the spec): the value of the kind
+## the spec chose for the pair, or `drawn`. The random draw is made for every pair either way.
+func _spec_rel(spec: Dictionary, a: int, b: int, drawn: float) -> float:
+	for r in spec.get("rels", []):
+		if int(r["a"]) == a and int(r["b"]) == b and Defs.REL_KINDS.has(r["kind"]):
+			return Defs.REL_KINDS[r["kind"]]
+	return drawn
 
 
 ## The creator's nodes, hidden until the `create` screen is shown.

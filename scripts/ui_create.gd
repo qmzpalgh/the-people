@@ -40,6 +40,9 @@ var traits_box: VBoxContainer
 var tab_btns: Array = []
 var trait_sliders := {}
 var points_l: Label
+var pairs_box: VBoxContainer
+var rels := {}  # "uidA-uidB" -> kind, for pairs the player has set
+var _next_uid := 0
 var wide_slider: HSlider
 var _frames := 0
 var _after_done := false
@@ -106,12 +109,16 @@ func setup(g) -> Array:
 	box.add_child(tabs)
 	tab_btns.append(ui._seg(tabs, "Look", _show_tab.bind("look")))
 	tab_btns.append(ui._seg(tabs, "Traits", _show_tab.bind("traits")))
+	tab_btns.append(ui._seg(tabs, "People", _show_tab.bind("people")))
 	look_box = VBoxContainer.new()
 	look_box.add_theme_constant_override("separation", 8)
 	box.add_child(look_box)
 	traits_box = VBoxContainer.new()
 	traits_box.add_theme_constant_override("separation", 8)
 	box.add_child(traits_box)
+	pairs_box = VBoxContainer.new()
+	pairs_box.add_theme_constant_override("separation", 6)
+	box.add_child(pairs_box)
 	for t in Defs.TRAITS:
 		trait_sliders[t] = _trait_row(traits_box, t)
 	points_l = ui._label(traits_box, "", 12)
@@ -181,6 +188,11 @@ func setup(g) -> Array:
 		var tr: Dictionary = members[sel]["traits"]
 		print("CREATE traits: asked ", Array(vals), " settled ", Defs.TRAITS.map(func(t): return tr[t]), " total ", _trait_total(tr))
 	_show_tab(OS.get_environment("TP_CREATE_TAB") if OS.has_environment("TP_CREATE_TAB") else "look")
+	if OS.has_environment("TP_CREATE_RELS"):  # "0-1:partners,0-2:family": the pairs, through the same callback
+		for kv in OS.get_environment("TP_CREATE_RELS").split(","):
+			var pk := kv.split(":")
+			var ij := pk[0].split("-")
+			set_rel(int(ij[0]), int(ij[1]), pk[1])
 	if OS.has_environment("TP_CREATE_REFUSE"):  # the refusals, scripted: remove and re-stage the only adult
 		remove_selected()
 		set_stage("child")
@@ -189,6 +201,9 @@ func setup(g) -> Array:
 			game.save_game()  # so a second launch can load what was made
 		for p in game.people:
 			print("CREATE game: ", describe(p.pname, p.age, p.traits, p.look))
+		for i in game.people.size():
+			for j in range(i + 1, game.people.size()):
+				print("CREATE game rel %d-%d: %s" % [i, j, game.get_rel(game.people[i], game.people[j])])
 	elif OS.has_environment("TP_CREATE_PRINT"):  # a launch that loaded a save: show who is in it
 		for p in game.people:
 			print("CREATE loaded: ", describe(p.pname, p.age, p.traits, p.look))
@@ -207,7 +222,8 @@ static func stage_of(age: float) -> String:
 func _new_member(st: String) -> Dictionary:
 	var r := Person.roll(rng)
 	_fit_budget(r["traits"])
-	return {"name": r["name"], "age": _age_for(st, r["age"]), "look": r["look"], "traits": r["traits"]}
+	_next_uid += 1
+	return {"uid": _next_uid, "name": r["name"], "age": _age_for(st, r["age"]), "look": r["look"], "traits": r["traits"]}
 
 
 ## An age inside the stage: the rolled one if it already fits, else a fresh one.
@@ -410,8 +426,72 @@ func set_trait(t: String, v: int) -> void:
 func _show_tab(which: String) -> void:
 	look_box.visible = which == "look"
 	traits_box.visible = which == "traits"
-	tab_btns[0].set_pressed_no_signal(which == "look")
-	tab_btns[1].set_pressed_no_signal(which == "traits")
+	pairs_box.visible = which == "people"
+	for i in tab_btns.size():
+		tab_btns[i].set_pressed_no_signal(["look", "traits", "people"][i] == which)
+
+
+static func _is_child(m: Dictionary) -> bool:
+	return stage_of(m["age"]) == "child"
+
+
+func _pair_key(a: Dictionary, b: Dictionary) -> String:
+	return "%d-%d" % [mini(a["uid"], b["uid"]), maxi(a["uid"], b["uid"])]
+
+
+## How members i and j start out: what the player chose, else partners for the first two
+## non-children, family for any pair with a child, and housemates for the rest.
+func kind_of(i: int, j: int) -> String:
+	var a: Dictionary = members[i]
+	var b: Dictionary = members[j]
+	var k: String = rels.get(_pair_key(a, b), "")
+	if k == "partners" and (_is_child(a) or _is_child(b)):
+		k = ""  # a member has since become a child
+	if k != "":
+		return k
+	if _is_child(a) or _is_child(b):
+		return "family"
+	for x in members.size():
+		for y in range(x + 1, members.size()):
+			if not _is_child(members[x]) and not _is_child(members[y]):
+				return "partners" if (x == i and y == j) else "housemates"
+	return "housemates"
+
+
+## Sets how members i and j start. Partners need two non-children.
+func set_rel(i: int, j: int, kind: String) -> void:
+	if kind == "partners" and (_is_child(members[i]) or _is_child(members[j])):
+		_refuse("Partners must both be adults or elders, so this pair stays %s." % kind_of(i, j))
+		_refresh()
+		return
+	rels[_pair_key(members[i], members[j])] = kind
+	_refresh()
+
+
+## One row per pair: both first names, then Partners / Family / Housemates.
+func _rebuild_pairs() -> void:
+	var ui: UI = game.ui
+	for c in pairs_box.get_children():
+		c.queue_free()
+	if members.size() < 2:
+		var l := ui._label(pairs_box, "A household of one has no pairs to set.", 12)
+		l.add_theme_color_override("font_color", UI.MUTED)
+		return
+	for i in members.size():
+		for j in range(i + 1, members.size()):
+			var nm := func(m): return str(m["name"]).strip_edges() if str(m["name"]).strip_edges() != "" else "?"
+			var l := ui._label(pairs_box, "%s and %s" % [nm.call(members[i]), nm.call(members[j])], 12)
+			l.add_theme_color_override("font_color", UI.MUTED)
+			var row := HBoxContainer.new()
+			row.add_theme_constant_override("separation", 4)
+			pairs_box.add_child(row)
+			var cur := kind_of(i, j)
+			for k in Defs.REL_KINDS:
+				var b := ui._seg(row, k.capitalize(), set_rel.bind(i, j, k))
+				b.set_pressed_no_signal(k == cur)
+				if k == "partners" and (_is_child(members[i]) or _is_child(members[j])):
+					b.disabled = true
+					b.tooltip_text = "Partners must both be adults or elders."
 
 
 func set_height(v: float) -> void:
@@ -483,6 +563,7 @@ func _refresh() -> void:
 	h_slider.set_value_no_signal(m["look"]["h"])
 	wide_slider.set_value_no_signal(m["look"]["wide"])
 	_rebuild_chips()
+	_rebuild_pairs()
 	var why := _problem()
 	done_b.disabled = why != ""
 	if why != "":
@@ -568,7 +649,12 @@ func finish() -> void:
 	var out := []
 	for m in members:
 		out.append({"name": str(m["name"]).strip_edges(), "age": m["age"], "look": m["look"], "traits": m["traits"]})
-	var spec := {"family": fam_e.text.strip_edges(), "money": Household.new().money, "members": out}
+	var rl := []
+	for i in members.size():
+		for j in range(i + 1, members.size()):
+			rl.append({"a": i, "b": j, "kind": kind_of(i, j)})
+	var spec := {"family": fam_e.text.strip_edges(), "money": Household.new().money, "members": out, "rels": rl}
+	print("CREATE spec rels: ", rl.map(func(r): return "%d-%d:%s=%s" % [r["a"], r["b"], r["kind"], Defs.REL_KINDS[r["kind"]]]))
 	for m in out:
 		print("CREATE spec: ", describe(m["name"] + " " + spec["family"], m["age"], m["traits"], m["look"]))
 	game.new_spec = spec
