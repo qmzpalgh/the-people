@@ -50,6 +50,7 @@ var lot_kind := ""
 ## shows the bare-lot hint meanwhile (UI._hint).
 var session_hint := false
 var _log_frames := 0  # frames seen by _session_log (TP_PAUSELOG)
+var _money_set_at_bill := false  # TP_MONEY_AT_BILL has been applied
 
 var buy_kind := ""
 var buy_rot := 0
@@ -499,12 +500,18 @@ func _new_day() -> void:
 				value += o.def["price"]
 			var bill := int(value * 0.03) + 25 * household_of(hh.id).size()
 			var rent: int = hh.rent if hh.tenure == "rent" else 0
+			if hh.player and OS.has_environment("TP_MONEY_AT_BILL") and not _money_set_at_bill:
+				_money_set_at_bill = true  # a test: the player's money just before the first bill
+				hh.money = int(OS.get_environment("TP_MONEY_AT_BILL"))
 			var before: int = hh.money
 			hh.money -= bill + rent
 			if hh.player:
 				msg("Bills paid: $%d." % bill if rent == 0 else "Bills paid: $%d, and rent: $%d." % [bill, rent])
 				if _test_days > 0 and lot_kind != "":
 					print("BILLS day %d: money before $%d, bills $%d, rent $%d, money after $%d" % [day, before, bill, rent, hh.money])
+				# A renter left in debt is warned; exactly $0 is paid up. Eviction is for later.
+				if hh.tenure == "rent" and hh.money < 0:
+					msg("You're $%d behind on the rent. Pay it off before the next bills." % -hh.money, "error")
 	if _test_days == 0 and _shot == "":
 		save_game(true)
 
