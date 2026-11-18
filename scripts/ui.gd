@@ -691,6 +691,8 @@ func _pick_tool(t: String) -> void:
 
 
 func _hint() -> String:
+	if game.session_hint and game.mode == "build" and game.tool == "":
+		return "Your lot is bare. Build walls and a door, buy a fridge and a bed, then press Space to start."
 	if game.mode == "buy":
 		if game.sell:
 			return "Click an object to sell it for 70% of its price."
@@ -711,6 +713,8 @@ func _hint() -> String:
 # ---------------------------------------------------------------- per-frame refresh
 
 func refresh() -> void:
+	if game.session_hint and game.speed > 0:
+		game.session_hint = false  # the build session's hint lasts until the first unpause
 	var h: float = game.hour()
 	clock_l.text = "%s %02d:%02d" % [Defs.DAYS[game.day % 7], int(h), int(fmod(h, 1.0) * 60.0)]
 	clock_l.tooltip_text = "Day %d" % (game.day + 1)
@@ -720,6 +724,12 @@ func refresh() -> void:
 		speed_btns[i].set_pressed_no_signal(game.speed == i)
 	for m in mode_btns:
 		mode_btns[m].set_pressed_no_signal(game.mode == m)
+	var bb: Button = mode_btns["build"]
+	var renting: bool = game.home.tenure == "rent"
+	if bb.disabled != renting:  # renters cannot rebuild: Build is greyed, and says why
+		bb.disabled = renting
+		bb.tooltip_text = Defs.RENT_NO_BUILD if renting else ""
+		bb.add_theme_color_override("font_disabled_color", Color(MUTED, 0.45))
 	if side.visible:
 		for k in item_btns:
 			item_btns[k].set_pressed_no_signal(game.buy_kind == k)

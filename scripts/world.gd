@@ -25,6 +25,9 @@ var walls_up := false
 var headless := false
 var night := false
 var door_tile := Vector2i.ZERO
+## The tile just inside the front door, where a new child appears and a visitor at the door
+## looks. At the kerb entry, the lawn tile behind it.
+var door_inside := Vector2i.ZERO
 var exit_tile := Vector2i.ZERO
 var house := Rect2i()
 var rooms: Array = []  # [{rect: Rect2i, type: String}]
@@ -36,7 +39,9 @@ var _obj_root: Node3D
 var _floor_mats: Array = []
 
 
-func setup(seed_v: int, data = null) -> void:
+## Builds the lot from saved `data`, or generates it from `seed_v`. With `empty`, a new
+## lot is lawn only: no house and no garden, just an entry tile at the kerb (see _gen_empty).
+func setup(seed_v: int, data = null, empty := false) -> void:
 	rng.seed = seed_v
 	floors.resize(W * H)
 	room_of.resize(W * H)
@@ -53,6 +58,8 @@ func setup(seed_v: int, data = null) -> void:
 		_build_scenery(seed_v)
 	if data != null:
 		load_state(data)
+	elif empty:
+		_gen_empty()
 	else:
 		for attempt in 40:
 			_clear()
@@ -634,6 +641,7 @@ func _gen_house() -> void:
 	var fx := rng.randi_range(fr.position.x + 1, fr.end.x - 2) if fr.size.x >= 3 else fr.position.x
 	_make_door(Vector3i(fx, south, 0), keep)
 	door_tile = Vector2i(fx, south)
+	door_inside = door_tile + Vector2i(0, -1)
 	exit_tile = Vector2i(fx, H - 1)
 	for y in range(south, H):
 		floors[y * W + fx] = 4
@@ -646,6 +654,18 @@ func _gen_house() -> void:
 		if ext and rng.randf() < 0.3:
 			walls[k] = 3
 	_furnish(keep)
+
+
+## A bare lot: no house, rooms or garden. The entry is one stone tile on the kerb, in the
+## middle of the street side, and stands in for the front door until one is built, so the
+## door and the exit are the same tile. Draws nothing from rng.
+func _gen_empty() -> void:
+	_clear()
+	house = Rect2i()
+	door_tile = Vector2i(W / 2, H - 1)
+	door_inside = door_tile + Vector2i(0, -1)
+	exit_tile = door_tile
+	floors[idx(door_tile)] = 4
 
 
 func _make_door(k: Vector3i, keep: Dictionary) -> void:
@@ -810,6 +830,77 @@ func free_tiles_in(type: String) -> Array:
 	return out
 
 
+## Where a household moving in is put down: free tiles in the living room, or on a lot with
+## no living room, the lawn just inside the entry.
+func arrival_tiles() -> Array:
+	for rm in rooms:
+		if rm["type"] == "living":
+			return free_tiles_in("living")
+	var out := []
+	for dy in range(-2, 1):
+		for dx in range(-2, 3):
+			var t := door_tile + Vector2i(dx, dy)
+			if walkable(t) and path(door_tile, t) != null:
+				out.append(t)
+	if out.is_empty():
+		out.append(door_tile)
+	return out
+
+
+## Moves the front door after building: door_tile becomes the outdoor tile in front of the
+## outside door nearest the street, or the kerb entry (exit_tile) when there is none.
+## An outside door has an enclosed room on one side (a region that does not reach the edge
+## of the lot) and, on the other, the outdoors that the kerb entry is in, reachable on foot
+## from it. A door in a free-standing wall has outdoors on both sides and does not count.
+## A generated house has exactly one such door, the one the generator made, so this leaves
+## it where it is. exit_tile, the kerb entry, never moves. Draws nothing from rng.
+func update_front_door() -> void:
+	ensure_nav()
+	var street := room_of[idx(exit_tile)]
+	var open := {}  # regions that reach the edge of the lot: open land, not rooms
+	for x in W:
+		open[room_of[idx(Vector2i(x, 0))]] = true
+		open[room_of[idx(Vector2i(x, H - 1))]] = true
+	for y in H:
+		open[room_of[idx(Vector2i(0, y))]] = true
+		open[room_of[idx(Vector2i(W - 1, y))]] = true
+	var best := exit_tile
+	var best_in := exit_tile + Vector2i(0, -1)  # the kerb entry's lawn tile, as on an empty lot
+	var found := false
+	for k in walls:
+		if walls[k] != 2:
+			continue
+		var b := Vector2i(k.x, k.y)
+		var a := b + (Vector2i(0, -1) if k.z == 0 else Vector2i(-1, 0))
+		if not inb(a) or not inb(b):
+			continue
+		for side in [[a, b], [b, a]]:
+			var inside: Vector2i = side[0]
+			var o: Vector2i = side[1]
+			if room_of[idx(o)] != street or open.has(room_of[idx(inside)]):
+				continue
+			if o != exit_tile and path(exit_tile, o) == null:
+				continue
+			if not found or _nearer_street(o, best):
+				best = o
+				best_in = inside
+				found = true
+	door_tile = best
+	door_inside = best_in
+
+
+## True if outdoor tile a is nearer the street than b: further south, then nearer the kerb
+## entry across, then further west, so the choice never depends on the order of `walls`.
+func _nearer_street(a: Vector2i, b: Vector2i) -> bool:
+	if a.y != b.y:
+		return a.y > b.y
+	var da := absi(a.x - exit_tile.x)
+	var db := absi(b.x - exit_tile.x)
+	if da != db:
+		return da < db
+	return a.x < b.x
+
+
 # ---------------------------------------------------------------- persistence
 
 func save_state() -> Dictionary:
@@ -819,13 +910,15 @@ func save_state() -> Dictionary:
 	var objs := []
 	for o in objects:
 		objs.append({"k": o.kind, "x": o.tile.x, "y": o.tile.y, "r": o.rot, "s": o.oseed, "label": o.label})
+		if landlords(o):
+			objs.back()["ll"] = true
 	var rms := []
 	for rm in rooms:
 		var r: Rect2i = rm["rect"]
 		rms.append({"rect": [r.position.x, r.position.y, r.size.x, r.size.y], "type": rm["type"]})
 	return {
 		"house": [house.position.x, house.position.y, house.size.x, house.size.y],
-		"rooms": rms, "door": [door_tile.x, door_tile.y], "exit": [exit_tile.x, exit_tile.y],
+		"rooms": rms, "door": [door_tile.x, door_tile.y], "door_in": [door_inside.x, door_inside.y], "exit": [exit_tile.x, exit_tile.y],
 		"wall_color": wall_color.to_html(), "floors": Array(floors), "walls": w, "objects": objs,
 		"rng": str(rng.state),
 	}
@@ -839,6 +932,9 @@ func load_state(d: Dictionary) -> void:
 		var r: Array = rm["rect"]
 		rooms.append({"rect": Rect2i(int(r[0]), int(r[1]), int(r[2]), int(r[3])), "type": rm["type"]})
 	door_tile = Vector2i(int(d["door"][0]), int(d["door"][1]))
+	# Saves from before door_in always had their front door in a south wall.
+	var di: Array = d.get("door_in", [door_tile.x, door_tile.y - 1])
+	door_inside = Vector2i(int(di[0]), int(di[1]))
 	exit_tile = Vector2i(int(d["exit"][0]), int(d["exit"][1]))
 	wall_color = Color.html(d["wall_color"])
 	var fl: Array = d["floors"]
@@ -850,7 +946,21 @@ func load_state(d: Dictionary) -> void:
 		if Defs.OBJECTS.has(o["k"]):
 			var obj := add_object(o["k"], int(o["x"]), int(o["y"]), int(o["r"]), int(o["s"]))
 			obj.label = o.get("label", "")
+			if o.get("ll", false):
+				obj.set_meta("landlord", true)
 	rng.state = int(d.get("rng", "1"))
+
+
+## Marks everything now on the lot as the landlord's: what came with a rented home. Kept as
+## node metadata on each object and saved as the optional object key "ll".
+func mark_landlords() -> void:
+	for o in objects:
+		o.set_meta("landlord", true)
+
+
+## True if the object came with a rented home (mark_landlords), not bought by the household.
+func landlords(o: SimObject) -> bool:
+	return o.get_meta("landlord", false)
 
 
 ## What the lot as it stands would cost to build at build and buy prices.

@@ -258,3 +258,19 @@ static func first_name(rng: RandomNumberGenerator) -> String:
 
 static func surname(rng: RandomNumberGenerator) -> String:
 	return _SUR_A[rng.randi() % _SUR_A.size()] + _SUR_B[rng.randi() % _SUR_B.size()]
+
+
+## What a household that has to house itself (one starting on an empty lot) starts with.
+## A household that moves into a generated home keeps Household's $2,500.
+## Set from World.value() over every generated home in the towns of seeds 100 to 105 (42
+## homes: cheapest $10,446, median $11,531, dearest $13,171): about 1.1 x (LOT_PRICE + the
+## cheapest home), so buying a lot and building the cheapest home leaves about a tenth spare.
+const START_FUNDS := 13750
+## What an empty lot costs. About a sixth of a typical (median) home: a real cost, but well
+## under the price of the house that goes on it.
+const LOT_PRICE := 2000
+## The share of a home's value (World.value() at move-in) that a renter pays each three-day
+## bill period.
+const RENT_SHARE := 0.01
+## Why a renter cannot use Build: the refusal message and the greyed Build button's tooltip.
+const RENT_NO_BUILD := "You rent this home, so you can't change its walls or floors."

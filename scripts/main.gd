@@ -43,6 +43,14 @@ var next_hh := 1
 var welcomed := false
 var over := false
 var age_rate := 1.0
+## The lot a new game started on, from TP_LOT: "" for a generated home, "empty" for bare
+## land, which counts as bought on moving in (start_household takes LOT_PRICE).
+var lot_kind := ""
+## True from the start of a build session until the game is first unpaused; the Build panel
+## shows the bare-lot hint meanwhile (UI._hint).
+var session_hint := false
+var _log_frames := 0  # frames seen by _session_log (TP_PAUSELOG)
+var _money_set_at_bill := false  # TP_MONEY_AT_BILL has been applied
 
 var buy_kind := ""
 var buy_rot := 0
@@ -110,7 +118,32 @@ func _ready() -> void:
 	world = World.new()
 	lot.add_child(world)
 	home.world = world
-	world.setup(seed_v, data["households"][0]["world"] if data != null else null)
+	# TP_LOT picks the lot a new game starts on: "empty" is bare land with no house, and
+	# "vacant:<seed>" is the generated home built from that seed. A save keeps the lot it was
+	# made on. The player's world draws from its own rng, so the game's rng does not move.
+	lot_kind = OS.get_environment("TP_LOT") if data == null else ""
+	var home_seed := int(lot_kind.get_slice(":", 1)) if lot_kind.begins_with("vacant:") else seed_v
+	world.setup(home_seed, data["households"][0]["world"] if data != null else null, lot_kind == "empty")
+	if lot_kind.begins_with("vacant:"):
+		_move_into_vacant.call_deferred(home_seed)  # once the town has its vacant lots
+		if OS.has_environment("TP_RENT"):  # rent the home rather than own it
+			home.tenure = "rent"
+			home.rent = int(world.value() * Defs.RENT_SHARE)
+			world.mark_landlords()  # what came with the home is not theirs to sell
+			(func(): msg("Paid a deposit of $%d." % _deposit_paid())).call_deferred()  # once the HUD is up
+	if OS.has_environment("TP_TEST") and (lot_kind != "" or OS.has_environment("TP_MONEY")):
+		(func(): print("START funds $%d, lot price $%d, deposit $%d, starting money $%d (START_FUNDS $%d)" % [money + _lot_paid() + _deposit_paid(), _lot_paid(), _deposit_paid(), money, Defs.START_FUNDS])).call_deferred()
+	if OS.has_environment("TP_TEST") and (lot_kind != "" or OS.has_environment("TP_PRICES")):
+		_print_prices.call_deferred()
+	# TP_SESSION applies the build session on any start, a loaded one included, for tests.
+	if lot_kind == "empty" or OS.has_environment("TP_SESSION"):
+		_start_build_session.call_deferred()  # after _ready, so a test's forced speed loses
+	if OS.has_environment("TP_PAUSELOG"):
+		get_tree().process_frame.connect(_session_log)
+	if lot_kind == "empty" and OS.has_environment("TP_ROOM"):
+		_room_test.call_deferred()  # once the camera and HUD it clicks through exist
+	if home.tenure == "rent" and OS.has_environment("TP_LIMITS"):
+		_limits_test.call_deferred()  # after the START line, so that shows the money before it
 	# The town draws from its own rng, seeded from the game's, so no other draw moves.
 	town = Town.new(hash("town %d" % seed_v))
 	town.add_home(0, seed_v)
@@ -124,7 +157,9 @@ func _ready() -> void:
 		town.fill()  # a new game, or a save from before towns: build the street around its households
 	cam = Cam.new()
 	lot.add_child(cam)
-	cam.position = Vector3(world.house.get_center().x + 0.5, 0, world.house.get_center().y + 1.0)
+	# On the house, or on a lot with no house, the middle of its front, so the lawn and the
+	# household at the kerb are both in view.
+	cam.position = Vector3(world.house.get_center().x + 0.5, 0, world.house.get_center().y + 1.0) if world.house.has_area() else Vector3(World.W / 2.0, 0, World.H - 4.0)
 	ghost_mat = StandardMaterial3D.new()
 	ghost_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	ghost_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -197,8 +232,15 @@ func _make_person(id: int, sv: int, fam: String, hh: Household, spec := {}) -> P
 
 ## A random household for a new game: {family, money, members: [{name, age, look, traits}]}.
 ## `name` is a first name; `look` and `traits` have the shapes a Person keeps in memory.
+## `money` is optional and wins when present. It is left out for a household on a lot with no
+## house or renting its home, so that start_household gives it START_FUNDS. TP_MONEY sets
+## it, for tests.
 func random_spec() -> Dictionary:
 	var spec := {"family": Defs.surname(rng), "money": Household.new().money, "members": []}
+	if _gets_start_funds():
+		spec.erase("money")
+	if OS.has_environment("TP_MONEY"):
+		spec["money"] = int(OS.get_environment("TP_MONEY"))
 	for i in rng.randi_range(2, 3):
 		var r := Person.roll(_rng_for(_member_seed(i)))
 		spec["members"].append({"name": r["name"], "age": r["age"], "look": r["look"], "traits": r["traits"]})
@@ -221,8 +263,9 @@ func _rng_for(sv: int) -> RandomNumberGenerator:
 func start_household(spec: Dictionary) -> void:
 	family = spec["family"]
 	home.family = family
-	home.money = int(spec["money"])
-	var spots := world.free_tiles_in("living")
+	home.money = int(spec["money"]) if spec.has("money") else (Defs.START_FUNDS if _gets_start_funds() else Household.new().money)
+	home.money -= _lot_paid() + _deposit_paid()
+	var spots := world.arrival_tiles()
 	for i in spec["members"].size():
 		var p := _make_person(i, _member_seed(i), family, home, spec["members"][i])
 		p.tile = spots[rng.randi() % spots.size()]
@@ -456,9 +499,19 @@ func _new_day() -> void:
 			for o in hh.world.objects:
 				value += o.def["price"]
 			var bill := int(value * 0.03) + 25 * household_of(hh.id).size()
-			hh.money -= bill
+			var rent: int = hh.rent if hh.tenure == "rent" else 0
+			if hh.player and OS.has_environment("TP_MONEY_AT_BILL") and not _money_set_at_bill:
+				_money_set_at_bill = true  # a test: the player's money just before the first bill
+				hh.money = int(OS.get_environment("TP_MONEY_AT_BILL"))
+			var before: int = hh.money
+			hh.money -= bill + rent
 			if hh.player:
-				msg("Bills paid: $%d." % bill)
+				msg("Bills paid: $%d." % bill if rent == 0 else "Bills paid: $%d, and rent: $%d." % [bill, rent])
+				if _test_days > 0 and lot_kind != "":
+					print("BILLS day %d: money before $%d, bills $%d, rent $%d, money after $%d" % [day, before, bill, rent, hh.money])
+				# A renter left in debt is warned; exactly $0 is paid up. Eviction is for later.
+				if hh.tenure == "rent" and hh.money < 0:
+					msg("You're $%d behind on the rent. Pay it off before the next bills." % -hh.money, "error")
 	if _test_days == 0 and _shot == "":
 		save_game(true)
 
@@ -563,7 +616,7 @@ func _spawn_child(pc: Dictionary) -> void:
 	var pa = _by_pid(int(pc["a"]))
 	var pb = _by_pid(int(pc["b"]))
 	var c := _make_child(pa, pb, hh)
-	var inside: Vector2i = hh.world.door_tile + Vector2i(0, -1)
+	var inside: Vector2i = hh.world.door_inside
 	c.tile = inside if hh.world.walkable(inside) else hh.world.exit_tile
 	c.position = hh.world.tile_center(c.tile)
 	if hh.player:
@@ -696,6 +749,9 @@ func _show_node(n: Node, on: bool) -> void:
 
 
 func set_mode(m: String) -> void:
+	if m == "build" and _renting():
+		msg(Defs.RENT_NO_BUILD, "error")
+		return
 	mode = m
 	set_buy("")
 	tool = ""
@@ -750,7 +806,7 @@ func save_game(quiet := false) -> void:
 	var hhs := []
 	for id in households:  # the player's household (id 0) was added first
 		var hh: Household = households[id]
-		hhs.append({"id": hh.id, "family": hh.family, "money": hh.money, "world": hh.world.save_state()})
+		hhs.append({"id": hh.id, "family": hh.family, "money": hh.money, "build_hint": hh.build_hint, "tenure": hh.tenure, "rent": hh.rent, "world": hh.world.save_state()})
 	var d := {
 		"v": 2, "seed": seed_base, "minutes": minutes, "rel": rel,
 		"next_pid": next_pid, "next_hh": next_hh, "welcomed": welcomed, "pending": pending, "free_will": free_will,
@@ -785,6 +841,9 @@ func _load_household(d: Dictionary) -> void:
 		var hh: Household = home if int(hd["id"]) == 0 else _add_household(int(hd["id"]), hd["world"])
 		hh.family = hd["family"]
 		hh.money = int(hd["money"])
+		hh.build_hint = bool(hd.get("build_hint", false))
+		hh.tenure = str(hd.get("tenure", "own"))
+		hh.rent = int(hd.get("rent", 0))
 	family = home.family
 	for pc in d.get("pending", []):
 		pending.append({"at": float(pc["at"]), "hh": int(pc["hh"]), "a": int(pc["a"]), "b": int(pc["b"])})
@@ -994,6 +1053,9 @@ func _placeable(a: Vector2i) -> bool:
 func _click_buy(mpos: Vector2) -> void:
 	if sell:
 		var o = pick_object(mpos)
+		if o != null and _renting() and world.landlords(o):
+			msg("That came with the home, so it isn't yours to sell.", "error")
+			return
 		if o != null and o.kind != "puddle":
 			var v := int(o.def["price"] * 0.7)
 			remove_object(o)
@@ -1033,6 +1095,9 @@ func _nearest_edge(mpos: Vector2) -> Vector3i:
 
 
 func _click_build(mpos: Vector2) -> void:
+	if _renting() and tool != "":
+		msg(Defs.RENT_NO_BUILD, "error")
+		return
 	match tool:
 		"wall", "erase":
 			drag_start = _corner(mpos)
@@ -1053,6 +1118,9 @@ func _click_build(mpos: Vector2) -> void:
 
 func _release(mpos: Vector2) -> void:
 	if mode != "build" or drag_start == null:
+		return
+	if _renting():
+		drag_start = null
 		return
 	var a: Vector2i = drag_start
 	var b := _corner(mpos)
@@ -1079,6 +1147,247 @@ func _walls_changed() -> void:
 	world.rebuild_walls()
 	world.nav_dirty = true
 	world.update_room_scores()
+	world.update_front_door()
+
+
+## The build session a household arriving on an empty lot starts in: Build mode, paused,
+## with Space resuming at speed 1. The first time for this household, the Build panel shows
+## the bare-lot hint until the game is unpaused. Safe to call again (say, when the lot is
+## first shown after another screen restored a speed): it only re-pauses and re-opens Build.
+func _start_build_session() -> void:
+	set_mode("build")
+	set_speed(0)
+	prev_speed = 1
+	if not home.build_hint:
+		home.build_hint = true
+		session_hint = true
+
+
+## TP_PAUSELOG: prints the clock, speed and the selected person's needs at frames 2, 100 and
+## 190. With TP_UNPAUSE=<frame>, presses Space (through the real key handler) at that frame.
+func _session_log() -> void:
+	_log_frames += 1
+	var f := _log_frames
+	if f in [2, 100, 190] and selected != null:
+		var nd := []
+		for n in Defs.NEEDS:
+			nd.append("%s %.3f" % [n.substr(0, 3), selected.needs[n]])
+		print("PAUSELOG frame %d: minutes %.3f, speed %d, mode %s, hint %s | %s: %s" % [f, minutes, speed, mode, session_hint, selected.first(), ", ".join(nd)])
+	if OS.has_environment("TP_UNPAUSE") and f == int(OS.get_environment("TP_UNPAUSE")):
+		var e := InputEventKey.new()
+		e.keycode = KEY_SPACE
+		e.pressed = true
+		_unhandled_input(e)
+		print("PAUSELOG frame %d: pressed Space, speed now %d" % [f, speed])
+
+
+## TP_LOT=vacant:<seed>: puts the move into the town record and proves the house. If the
+## seed is one of the town's vacant lots, household 0 takes that lot and the lot it was given
+## first becomes vacant, keeping the seed of the house it would have had. Otherwise lot 0 keeps
+## household 0 with the new seed. Then prints the player's home beside a fresh headless World
+## built from the same seed, as the town view would build it.
+func _move_into_vacant(s: int) -> void:
+	var vac := town.lots.filter(func(l): return l["kind"] == "vacant")
+	print("TOWN vacant lots: " + ", ".join(vac.map(func(l): return "lot %d seed %d" % [l["id"], l["seed"]])))
+	var taken = null
+	for l in vac:
+		if l["seed"] == s:
+			taken = l
+	var first = town.lot_of(0)
+	if taken != null:
+		town.vacate(0)
+		town.take_vacant(taken["id"], 0)
+		print("TOWN household 0 moved into vacant lot %d (seed %d); lot %d is vacant now (seed %d)" % [taken["id"], s, first["id"], first["seed"]])
+	else:
+		first["seed"] = s
+		print("TOWN seed %d is not a vacant lot in this town; lot %d keeps household 0, now with seed %d" % [s, first["id"], s])
+	var w := World.new()
+	w.headless = true
+	w.setup(s)
+	print("HOME player's: " + _home_line(world))
+	print("HOME from seed: " + _home_line(w))
+	var mine := world.save_state()
+	for od in mine["objects"]:
+		od.erase("ll")  # a rental marks the landlord's furniture; the house itself is the same
+	print("HOME identical: %s" % (JSON.stringify(mine) == JSON.stringify(w.save_state())))
+	w.free()
+
+
+func _home_line(w: World) -> String:
+	return "house %s, wall colour %s, value $%d, %d wall edges, %d objects, door %s" % [w.house, w.wall_color.to_html(false), w.value(), w.walls.size(), w.objects.size(), w.door_tile]
+
+
+## True when the player's lot came with no house, so the household has to house itself.
+func _houses_itself() -> bool:
+	return world != null and not world.house.has_area()
+
+
+## What the household paid for its lot on moving in: LOT_PRICE for a TP_LOT=empty start,
+## which stands in for buying an empty lot until the town sells them (N2); nothing otherwise.
+func _lot_paid() -> int:
+	return Defs.LOT_PRICE if lot_kind == "empty" else 0
+
+
+## True when a new household starts from START_FUNDS rather than Household's $2,500: on a
+## lot with no house, or renting its home. A household that owns a generated home it moves
+## into keeps $2,500 until N4 decides what buying a home costs.
+func _gets_start_funds() -> bool:
+	return _houses_itself() or (home != null and home.tenure == "rent")
+
+
+## The deposit paid on moving in: one rent period for a TP_LOT=vacant rental (TP_RENT), which
+## stands in for renting from the town until it lets homes (N3); nothing otherwise. Not saved:
+## it is always one period of the saved rent, and nothing after the start reads it.
+func _deposit_paid() -> int:
+	return home.rent if lot_kind.begins_with("vacant:") and home.tenure == "rent" else 0
+
+
+## Renters can furnish but not rebuild: no Build mode, no wall, door, window or floor edits,
+## and no selling what came with the home.
+func _renting() -> bool:
+	return home != null and home.tenure == "rent"
+
+
+## TP_LIMITS (on a TP_LOT=vacant rental): tries what a renter may not do, and what they may,
+## through the functions the player's clicks use, printing each result and the money.
+func _limits_test() -> void:
+	var m0 := money
+	set_mode("build")
+	print("LIMITS enter Build: %s, mode %s, money $%d -> $%d" % ["allowed" if mode == "build" else "refused", mode, m0, money])
+	mode = "build"  # as if a script got past set_mode: the clicks must refuse on their own
+	m0 = money
+	var had := world.walls.has(Vector3i(3, 2, 0))
+	tool = "wall"
+	_click_build(_at(2, 2))
+	_release(_at(6, 2))
+	var walled := world.walls.has(Vector3i(3, 2, 0)) and not had
+	print("LIMITS wall on the lawn: %s, money $%d -> $%d" % ["allowed" if walled else "refused", m0, money])
+	m0 = money
+	var f0 := world.floors[world.idx(Vector2i(3, 3))]
+	tool = "floor:1"
+	_click_build(_at(3.5, 3.5))
+	var floored := world.floors[world.idx(Vector2i(3, 3))] != f0
+	print("LIMITS floor tile: %s, money $%d -> $%d" % ["allowed" if floored else "refused", m0, money])
+	tool = ""
+	mode = "live"
+	set_mode("buy")
+	var o = world.nearest_object("fridge", Vector2i.ZERO)
+	sell = true
+	var mp := cam.cam.unproject_position(o.position + Vector3(0, 0.5, 0))
+	var aimed: bool = pick_object(mp) == o
+	m0 = money
+	_click_buy(mp)
+	print("LIMITS sell the landlord's %s (click lands on it: %s): %s, money $%d -> $%d" % [o.def["name"], aimed, "allowed" if not o.alive else "refused", m0, money])
+	set_buy("plant")
+	var t = world.free_tile_near(Vector2i(3, 3))
+	m0 = money
+	_click_buy(_at(t.x + 0.5, t.y + 0.5))
+	var p = world.object_at(t)
+	var m1 := money
+	set_buy("")
+	sell = true
+	var bought: bool = p != null and p.kind == "plant" and not world.landlords(p)
+	var sold := false
+	if bought:
+		mp = cam.cam.unproject_position(p.position + Vector3(0, 0.3, 0))
+		aimed = pick_object(mp) == p
+		_click_buy(mp)
+		sold = not p.alive
+	print("LIMITS buy a plant ($%d) then sell it (click lands on it: %s): bought %s, money $%d -> $%d; sold %s, money -> $%d" % [Defs.OBJECTS["plant"]["price"], aimed, bought, m0, m1, sold, money])
+	set_mode("live")
+
+
+## TP_PRICES (or any TP_LOT) under TP_TEST: one line with the funds, the lot price and the
+## value of every generated home in this town, the player's, the neighbours' and the vacant
+## ones. Each is built afresh from its lot's seed, so nothing lived in has changed it yet.
+## A bare player lot is not a generated home and is left out.
+func _print_prices() -> void:
+	var vals := []
+	for l in town.by_slot():
+		if l["kind"] == "empty" or l["seed"] < 0:
+			continue
+		if l["kind"] == "home" and l["household"] == 0 and _houses_itself():
+			continue
+		var w := World.new()
+		w.headless = true
+		w.setup(l["seed"])
+		vals.append(w.value())
+		if l["kind"] == "home" and households.has(l["household"]) and households[l["household"]].world.value() != vals.back():
+			print("PRICES mismatch on lot %d: lived-in home $%d, built from seed $%d" % [l["id"], households[l["household"]].world.value(), vals.back()])
+		w.free()
+	vals.sort()
+	if vals.is_empty():
+		return
+	var spare: int = Defs.START_FUNDS - Defs.LOT_PRICE - vals[0]
+	print("PRICES seed %d: START_FUNDS $%d, LOT_PRICE $%d | %d homes: cheapest $%d, median $%d, dearest $%d | spare after lot + cheapest $%d (%.1f%% of their cost)" % [
+		seed_base, Defs.START_FUNDS, Defs.LOT_PRICE, vals.size(), vals[0], vals[vals.size() / 2], vals.back(), spare, 100.0 * spare / (Defs.LOT_PRICE + vals[0])])
+
+
+## Where a point on the ground shows on screen, for scripted clicks.
+func _at(x: float, y: float) -> Vector2:
+	return cam.cam.unproject_position(Vector3(x, 0, y))
+
+
+## TP_ROOM (with TP_LOT=empty): builds a 5 x 5 room with a door in its south wall through the
+## player's own build clicks, then brings a neighbour over, printing where the front door is
+## and where the visitor stops. Then checks the fallbacks: a second door on the west wall,
+## the south door made a window (a second visitor, and a new child, at the west door), and
+## the west door erased.
+func _room_test() -> void:
+	set_mode("build")
+	tool = "wall"
+	var c := [Vector2(10, 14), Vector2(15, 14), Vector2(15, 19), Vector2(10, 19), Vector2(10, 14)]
+	for i in 4:
+		_click_build(_at(c[i].x, c[i].y))
+		_release(_at(c[i + 1].x, c[i + 1].y))
+	tool = "door"
+	_click_build(_at(12.5, 19.05))
+	set_mode("live")
+	print("ROOM built: %d wall edges, door edge (12, 19, 0) = %d, money $%d" % [world.walls.size(), world.walls.get(Vector3i(12, 19, 0), 0), money])
+	print("ROOM front door tile: %s, inside %s (kerb entry %s)" % [world.door_tile, world.door_inside, world.exit_tile])
+	_room_visit()
+	set_mode("build")
+	tool = "door"
+	_click_build(_at(10.05, 16.5))
+	print("ROOM second door on the west wall, edge (10, 16, 1) = %d; front door tile: %s" % [world.walls.get(Vector3i(10, 16, 1), 0), world.door_tile])
+	tool = "window"
+	_click_build(_at(12.5, 19.05))
+	print("ROOM south door made a window, edge (12, 19, 0) = %d; front door tile: %s, inside %s" % [world.walls.get(Vector3i(12, 19, 0), 0), world.door_tile, world.door_inside])
+	_room_visit()
+	if not people.is_empty():
+		_spawn_child({"hh": 0, "a": people[0].pid, "b": -1})
+		print("ROOM new child %s appeared at %s (front door %s, inside %s)" % [people.back().first(), people.back().tile, world.door_tile, world.door_inside])
+	tool = "erase"
+	_click_build(_at(10, 16))
+	_release(_at(10, 17))
+	print("ROOM west door erased, edge (10, 16, 1) = %d; front door tile: %s, inside %s" % [world.walls.get(Vector3i(10, 16, 1), 0), world.door_tile, world.door_inside])
+	set_mode("live")
+
+
+## For TP_ROOM: sends a neighbour over and runs the clock until they wait at the door, then
+## prints where they stand and which tile they face.
+func _room_visit() -> void:
+	var v = null
+	for i in 1440:
+		if v == null:
+			v = available_neighbour()
+			if v != null:
+				v.start_visit(true)
+				print("ROOM visitor sent: %s at %05.2f" % [v.pname, hour()])
+		elif not is_instance_valid(v) or v.vstate == "waiting":
+			break
+		_step(1.0 / 60.0, 1.0)
+		if _probe != null and _test_days > 0:
+			_probe.step(1.0 / 60.0)
+	if v != null and is_instance_valid(v) and v.vstate == "waiting":
+		print("ROOM visitor %s arrived at %s at %05.2f (front door %s), facing %s" % [v.pname, v.tile, hour(), world.door_tile, _facing(v)])
+	else:
+		print("ROOM visitor did not arrive")
+
+
+## The tile next to a person in the direction they face.
+func _facing(p: Person) -> Vector2i:
+	return p.tile + Vector2i(roundi(sin(p.rotation.y)), roundi(cos(p.rotation.y)))
 
 
 func _paint(mpos: Vector2) -> void:

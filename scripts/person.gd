@@ -867,7 +867,7 @@ func _finish(a: Dictionary, ok: bool) -> void:
 				"arrive":
 					vstate = "waiting"
 					wait_t = 1.5
-					face(world.tile_center(tile + Vector2i(0, -1)))
+					face(world.tile_center(world.door_inside))
 					_msg("%s is at the door. Greet them to let them in." % pname, "knock")
 				"leave":
 					_walk_off()
