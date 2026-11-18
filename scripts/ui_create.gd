@@ -35,6 +35,11 @@ var hair_btns: Array = []
 var shirt_btns: Array = []
 var pants_btns: Array = []
 var h_slider: HSlider
+var look_box: VBoxContainer
+var traits_box: VBoxContainer
+var tab_btns: Array = []
+var trait_sliders := {}
+var points_l: Label
 var wide_slider: HSlider
 var _frames := 0
 var _after_done := false
@@ -96,19 +101,34 @@ func setup(g) -> Array:
 	for st in STAGES:
 		var b := ui._seg(srow, st.capitalize(), set_stage.bind(st))
 		stage_btns.append(b)
-	var hl := ui._label(box, "Hair style", 12)
+	var tabs := HBoxContainer.new()
+	tabs.add_theme_constant_override("separation", 4)
+	box.add_child(tabs)
+	tab_btns.append(ui._seg(tabs, "Look", _show_tab.bind("look")))
+	tab_btns.append(ui._seg(tabs, "Traits", _show_tab.bind("traits")))
+	look_box = VBoxContainer.new()
+	look_box.add_theme_constant_override("separation", 8)
+	box.add_child(look_box)
+	traits_box = VBoxContainer.new()
+	traits_box.add_theme_constant_override("separation", 8)
+	box.add_child(traits_box)
+	for t in Defs.TRAITS:
+		trait_sliders[t] = _trait_row(traits_box, t)
+	points_l = ui._label(traits_box, "", 12)
+	points_l.add_theme_color_override("font_color", UI.MUTED)
+	var hl := ui._label(look_box, "Hair style", 12)
 	hl.add_theme_color_override("font_color", UI.MUTED)
 	var hrow := HBoxContainer.new()
 	hrow.add_theme_constant_override("separation", 4)
-	box.add_child(hrow)
+	look_box.add_child(hrow)
 	for i in Defs.HAIR_STYLES.size():
 		style_btns.append(ui._seg(hrow, Defs.HAIR_STYLES[i], set_style.bind(i)))
-	skin_btns = _swatches(box, "Skin", Defs.SKIN_TONES, set_skin)
-	hair_btns = _swatches(box, "Hair colour", Defs.HAIR_COLOURS, set_hair)
-	shirt_btns = _swatches(box, "Shirt", Defs.SHIRT_COLOURS, set_shirt)
-	pants_btns = _swatches(box, "Trousers", Defs.TROUSER_COLOURS, set_pants)
-	h_slider = _slider(box, "Height", Defs.HEIGHT_RANGE, set_height)
-	wide_slider = _slider(box, "Build", Defs.WIDTH_RANGE, set_build)
+	skin_btns = _swatches(look_box, "Skin", Defs.SKIN_TONES, set_skin)
+	hair_btns = _swatches(look_box, "Hair colour", Defs.HAIR_COLOURS, set_hair)
+	shirt_btns = _swatches(look_box, "Shirt", Defs.SHIRT_COLOURS, set_shirt)
+	pants_btns = _swatches(look_box, "Trousers", Defs.TROUSER_COLOURS, set_pants)
+	h_slider = _slider(look_box, "Height", Defs.HEIGHT_RANGE, set_height)
+	wide_slider = _slider(look_box, "Build", Defs.WIDTH_RANGE, set_build)
 	why_l = ui._label(box, "", 12)
 	why_l.add_theme_color_override("font_color", UI.MUTED)
 	why_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -152,6 +172,15 @@ func setup(g) -> Array:
 				set_skin(int(p[1]))
 			elif p[0] == "hair":
 				set_hair(int(p[1]))
+	if OS.has_environment("TP_CREATE_TRAITS"):  # "9,9,5,1,1": set through the slider callbacks, in Defs.TRAITS order
+		var vals := OS.get_environment("TP_CREATE_TRAITS").split(",")
+		for t in Defs.TRAITS:  # start from all 1s, so no rolled value eats the points being asked for
+			set_trait(t, 1)
+		for i in Defs.TRAITS.size():
+			set_trait(Defs.TRAITS[i], int(vals[i]))
+		var tr: Dictionary = members[sel]["traits"]
+		print("CREATE traits: asked ", Array(vals), " settled ", Defs.TRAITS.map(func(t): return tr[t]), " total ", _trait_total(tr))
+	_show_tab(OS.get_environment("TP_CREATE_TAB") if OS.has_environment("TP_CREATE_TAB") else "look")
 	if OS.has_environment("TP_CREATE_REFUSE"):  # the refusals, scripted: remove and re-stage the only adult
 		remove_selected()
 		set_stage("child")
@@ -177,6 +206,7 @@ static func stage_of(age: float) -> String:
 ## A new member in the given stage, rolled like anyone else; only the age depends on the stage.
 func _new_member(st: String) -> Dictionary:
 	var r := Person.roll(rng)
+	_fit_budget(r["traits"])
 	return {"name": r["name"], "age": _age_for(st, r["age"]), "look": r["look"], "traits": r["traits"]}
 
 
@@ -297,10 +327,19 @@ func _slider(box: Node, label: String, range: Vector2, changed: Callable) -> HSl
 	var ui: UI = game.ui
 	var l := ui._label(box, label, 12)
 	l.add_theme_color_override("font_color", UI.MUTED)
+	var s := _make_slider(range.x, range.y, 0.005)
+	s.value_changed.connect(changed)
+	box.add_child(s)
+	return s
+
+
+## A quiet slider: light track, ink-coloured filled part.
+func _make_slider(lo: float, hi: float, step: float) -> HSlider:
+	var ui: UI = game.ui
 	var s := HSlider.new()
-	s.min_value = range.x
-	s.max_value = range.y
-	s.step = 0.005
+	s.min_value = lo
+	s.max_value = hi
+	s.step = step
 	s.custom_minimum_size.y = 18
 	s.focus_mode = Control.FOCUS_NONE
 	var track: StyleBoxFlat = ui._sb(Color(0.86, 0.88, 0.87), 3, 0, 0)
@@ -312,9 +351,60 @@ func _slider(box: Node, label: String, range: Vector2, changed: Callable) -> HSl
 	s.add_theme_stylebox_override("slider", track)
 	s.add_theme_stylebox_override("grabber_area", fill)
 	s.add_theme_stylebox_override("grabber_area_highlight", fill)
-	s.value_changed.connect(changed)
-	box.add_child(s)
 	return s
+
+
+static func _trait_total(tr: Dictionary) -> int:
+	var n := 0
+	for t in Defs.TRAITS:
+		n += int(tr[t])
+	return n
+
+
+## Brings a trait set down to the budget by lowering the highest trait one point at a time;
+## ties go to the creator's own rng. A set already inside the budget is left alone.
+func _fit_budget(tr: Dictionary) -> void:
+	while _trait_total(tr) > Defs.TRAIT_BUDGET:
+		var top := 0
+		for t in Defs.TRAITS:
+			top = maxi(top, int(tr[t]))
+		var ties := Defs.TRAITS.filter(func(t): return int(tr[t]) == top)
+		tr[ties[rng.randi() % ties.size()]] = top - 1
+
+
+## One trait: the word for 1, a 1 to 9 slider, the word for 9. The words are the card's own.
+func _trait_row(box: Node, t: String) -> HSlider:
+	var ui: UI = game.ui
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	box.add_child(row)
+	var lo := ui._label(row, UI.TRAIT_ENDS[t][0], 12)
+	lo.custom_minimum_size.x = 62
+	lo.add_theme_color_override("font_color", UI.MUTED)
+	var s := _make_slider(1.0, 9.0, 1.0)
+	s.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	s.value_changed.connect(func(v): set_trait(t, int(v)))
+	row.add_child(s)
+	var hi := ui._label(row, UI.TRAIT_ENDS[t][1], 12)
+	hi.custom_minimum_size.x = 62
+	hi.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	hi.add_theme_color_override("font_color", UI.MUTED)
+	return s
+
+
+## Sets a trait, but never past the budget: the value is clamped to the points left.
+func set_trait(t: String, v: int) -> void:
+	var tr: Dictionary = members[sel]["traits"]
+	var others := _trait_total(tr) - int(tr[t])
+	tr[t] = clampi(v, 1, mini(9, Defs.TRAIT_BUDGET - others))
+	_refresh()
+
+
+func _show_tab(which: String) -> void:
+	look_box.visible = which == "look"
+	traits_box.visible = which == "traits"
+	tab_btns[0].set_pressed_no_signal(which == "look")
+	tab_btns[1].set_pressed_no_signal(which == "traits")
 
 
 func set_height(v: float) -> void:
@@ -375,6 +465,10 @@ func _refresh() -> void:
 	for i in STAGES.size():
 		stage_btns[i].set_pressed_no_signal(STAGES[i] == stage_of(m["age"]))
 	remove_b.disabled = members.size() <= 1
+	var tr: Dictionary = m["traits"]
+	for t in Defs.TRAITS:
+		trait_sliders[t].set_value_no_signal(tr[t])
+	points_l.text = "Points left: %d of %d" % [Defs.TRAIT_BUDGET - _trait_total(tr), Defs.TRAIT_BUDGET]
 	_style_swatches(skin_btns, Defs.SKIN_TONES, m["look"]["skin"])
 	_style_swatches(hair_btns, Defs.HAIR_COLOURS, m["look"]["hair"])
 	_style_swatches(shirt_btns, Defs.SHIRT_COLOURS, m["look"]["shirt"])
@@ -454,6 +548,7 @@ func set_stage(st: String) -> void:
 func reroll() -> void:
 	var r := Person.roll(rng)
 	members[sel]["look"] = r["look"]
+	_fit_budget(r["traits"])
 	members[sel]["traits"] = r["traits"]
 	_select(sel)
 

@@ -53,6 +53,9 @@ const SKIN_TONES := [Color(0.96, 0.8, 0.68), Color(0.87, 0.67, 0.5), Color(0.72,
 const HAIR_COLOURS := [Color(0.1, 0.08, 0.07), Color(0.35, 0.22, 0.12), Color(0.75, 0.6, 0.3), Color(0.6, 0.25, 0.12), Color(0.3, 0.4, 0.7)]
 const HAIR_STYLES := ["Cropped", "Long", "Bun", "Flat top"]
 ## Clothes the creator offers. Random people keep any hue; these are only the choices on offer.
+## Trait points. Every trait runs 1 to 9 (as Person.roll draws it); a member's five add up to at most TRAIT_BUDGET,
+## which is the average of a random person.
+const TRAIT_BUDGET := 25
 ## Body size ranges, as Person.roll draws them: look.h scales height, look.wide scales width.
 const HEIGHT_RANGE := Vector2(0.9, 1.08)
 const WIDTH_RANGE := Vector2(0.9, 1.15)
